@@ -1,0 +1,33 @@
+services:
+  forgejo:
+    build: docker/forgejo-dev
+    environment:
+      USER_UID: "1000"
+      USER_GID: "1000"
+      FORGEJO_URL: http://localhost:3000
+      FORGEJO__server__ROOT_URL: http://localhost:3000/
+      FORGEJO__server__SSH_DOMAIN: localhost
+      FORGEJO__server__SSH_PORT: "2222"
+      FORGEJO__database__DB_TYPE: sqlite3
+      FORGEJO__database__PATH: /data/gitea/data/forgejo.db
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__security__SECRET_KEY: local-dev-secret-key-change-me
+      FORGEJO__security__INTERNAL_TOKEN: local-dev-internal-token-change-me
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+      FORGEJO__webhook__ALLOWED_HOST_LIST: forge-ai,host.lima.internal,host.docker.internal,localhost,127.0.0.1
+      FORGEJO_BOOTSTRAP_USER: ${FORGEJO_BOOTSTRAP_USER:-forge-ai}
+      FORGEJO_BOOTSTRAP_PASSWORD: ${FORGEJO_BOOTSTRAP_PASSWORD:-forge-ai-password}
+      FORGEJO_BOOTSTRAP_EMAIL: ${FORGEJO_BOOTSTRAP_EMAIL:-forge-ai@example.invalid}
+      FORGEJO_BOOTSTRAP_REPO: ${FORGEJO_BOOTSTRAP_REPO:-demo}
+      FORGEJO_BOOTSTRAP_ISSUE: ${FORGEJO_BOOTSTRAP_ISSUE:-true}
+      FORGEJO_DEV_USER: ${FORGEJO_DEV_USER:-forge-user}
+      FORGEJO_DEV_PASSWORD: ${FORGEJO_DEV_PASSWORD:-user-password}
+      FORGEJO_DEV_EMAIL: ${FORGEJO_DEV_EMAIL:-forge-user@example.invalid}
+      TRIGGER_LABEL: ${TRIGGER_LABEL:-ai}
+      WEBHOOK_TARGET_URL: ${WEBHOOK_TARGET_URL:-http://host.lima.internal:8080/webhook}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "3000:3000"
+      - "2222:22"

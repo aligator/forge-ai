@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+{
+	echo "forge-ai mock agent ran at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	echo
+	echo "Prompt tail:"
+	printf '%s\n' "${FORGE_AI_PROMPT:-}" | tail -40
+} >forge-ai-result.txt
+
+echo "Mock agent wrote forge-ai-result.txt"
