@@ -100,26 +100,46 @@ func (c *Client) CreateCommentReaction(ctx context.Context, owner, repo string, 
 	return err
 }
 
-func (c *Client) GetPullReviewComments(ctx context.Context, owner, repo string, prIndex int, reviewID int64) ([]string, error) {
-	body, err := c.do(ctx, http.MethodGet, apiPath("repos", owner, repo, "pulls", fmt.Sprint(prIndex), "reviews", fmt.Sprint(reviewID), "comments"), nil, nil)
+func (c *Client) GetLatestPullReviewComments(ctx context.Context, owner, repo string, prIndex int) ([]Comment, error) {
+	body, err := c.do(ctx, http.MethodGet, apiPath("repos", owner, repo, "pulls", fmt.Sprint(prIndex), "reviews"), nil, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	var comments []struct {
-		Body string `json:"body"`
+	var reviews []struct {
+		ID int64 `json:"id"`
 	}
+	if err := json.Unmarshal(body, &reviews); err != nil {
+		return nil, err
+	}
+
+	var latestID int64
+	for _, r := range reviews {
+		if r.ID > latestID {
+			latestID = r.ID
+		}
+	}
+	if latestID == 0 {
+		return nil, nil
+	}
+
+	body, err = c.do(ctx, http.MethodGet, apiPath("repos", owner, repo, "pulls", fmt.Sprint(prIndex), "reviews", fmt.Sprint(latestID), "comments"), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var comments []Comment
 	if err := json.Unmarshal(body, &comments); err != nil {
 		return nil, err
 	}
 
-	bodies := make([]string, 0, len(comments))
+	result := make([]Comment, 0, len(comments))
 	for _, c := range comments {
 		if strings.TrimSpace(c.Body) != "" {
-			bodies = append(bodies, c.Body)
+			result = append(result, c)
 		}
 	}
-	return bodies, nil
+	return result, nil
 }
 
 func (c *Client) FindOpenPullRequest(ctx context.Context, owner, repo, head string) (*PullRequest, error) {

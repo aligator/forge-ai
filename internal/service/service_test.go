@@ -166,8 +166,12 @@ type recordingForgejo struct {
 	reviewComments    []string
 }
 
-func (f *recordingForgejo) GetPullReviewComments(_ context.Context, _, _ string, _ int, _ int64) ([]string, error) {
-	return f.reviewComments, nil
+func (f *recordingForgejo) GetLatestPullReviewComments(_ context.Context, _, _ string, _ int) ([]forgejo.Comment, error) {
+	comments := make([]forgejo.Comment, 0, len(f.reviewComments))
+	for _, body := range f.reviewComments {
+		comments = append(comments, forgejo.Comment{Body: body})
+	}
+	return comments, nil
 }
 
 func (f *recordingForgejo) CreateIssueComment(_ context.Context, _, _ string, _ int, body string) error {

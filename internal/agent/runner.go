@@ -46,6 +46,9 @@ func (r *Runner) Run(ctx context.Context, workdir, prompt string) (Result, error
 	cmd.Stderr = io.MultiWriter(&output, os.Stderr)
 
 	r.logger.Info("starting agent", "workdir", workdir, "command", commandLine(cmd))
+	if out, err := exec.CommandContext(ctx, "find", workdir, "-maxdepth", "3", "-not", "-path", "*/.git/*").Output(); err == nil {
+		r.logger.Debug("workspace contents", "files", strings.TrimSpace(string(out)))
+	}
 	err := cmd.Run()
 	if err != nil {
 		r.logger.Error("agent failed", "error", err)

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"codeberg.org/forge-ai/internal/agent"
@@ -14,7 +16,7 @@ import (
 )
 
 type Forgejo interface {
-	GetPullReviewComments(context.Context, string, string, int, int64) ([]string, error)
+	GetLatestPullReviewComments(context.Context, string, string, int) ([]forgejo.Comment, error)
 	CreateIssueComment(context.Context, string, string, int, string) error
 	CreateCommentReaction(context.Context, string, string, int64, string) error
 	FindOpenPullRequest(context.Context, string, string, string) (*forgejo.PullRequest, error)
@@ -66,12 +68,30 @@ func (s *Service) Handle(ctx context.Context, event string, payload forgejo.Webh
 		return nil
 	}
 
-	if ticket.Instruction == "" && payload.Review != nil && payload.Review.ID != 0 {
-		bodies, err := s.forgejo.GetPullReviewComments(ctx, ticket.Owner, ticket.Repo, ticket.Number, payload.Review.ID)
+	s.logger.Debug("ticket from payload",
+		"ticket", ticket.Ref(),
+		"title", ticket.Title,
+		"instruction", ticket.Instruction,
+		"comment_id", ticket.CommentID,
+		"has_review", payload.Review != nil,
+	)
+
+	if ticket.Instruction == "" && event == "pull_request_comment" && payload.Action == "reviewed" {
+		comments, err := s.forgejo.GetLatestPullReviewComments(ctx, ticket.Owner, ticket.Repo, ticket.Number)
 		if err != nil {
-			s.logger.Warn("fetch review comments failed", "review_id", payload.Review.ID, "error", err)
+			s.logger.Warn("fetch review comments failed", "error", err)
 		} else {
-			ticket.Instruction = strings.Join(bodies, "\n")
+			s.logger.Debug("fetched review comments", "count", len(comments))
+			for _, c := range comments {
+				if strings.Contains(strings.ToLower(c.Body), strings.ToLower(s.cfg.TriggerMention)) && ticket.CommentID == 0 {
+					ticket.CommentID = c.ID
+				}
+				if ticket.Instruction == "" {
+					ticket.Instruction = c.Body
+				} else {
+					ticket.Instruction += "\n" + c.Body
+				}
+			}
 		}
 	}
 
@@ -119,6 +139,7 @@ func (s *Service) run(ctx context.Context, ticket forgejo.Ticket) error {
 		return err
 	}
 
+	s.logger.Info("workspace ready", "workdir", workdir, "branch", branch)
 	result, agentErr := s.agent.Run(ctx, workdir, prompt(ticket, branch, base, s.cfg.AgentAllowGit))
 	if agentErr != nil {
 		err := fmt.Errorf("agent failed: %w", agentErr)
@@ -126,7 +147,11 @@ func (s *Service) run(ctx context.Context, ticket forgejo.Ticket) error {
 		return err
 	}
 
-	committed, err := s.git.CommitIfDirty(ctx, workdir, fmt.Sprintf("forge-ai: work on %s #%d", ticket.Kind, ticket.Number))
+	commitMsg := readAndRemoveCommitMsg(workdir)
+	if commitMsg == "" {
+		commitMsg = fmt.Sprintf("forge-ai: work on %s #%d", ticket.Kind, ticket.Number)
+	}
+	committed, err := s.git.CommitIfDirty(ctx, workdir, commitMsg)
 	if err != nil {
 		_ = s.postFailureWithOutput(ctx, ticket, err, result.Output)
 		return err
@@ -242,7 +267,9 @@ Trigger comment:
 Treat the trigger comment as the primary instruction. Use the issue or pull request body only as background context.
 %s
 
-Implement the requested change using the repository's existing style. Run relevant tests when practical. If you cannot complete the requested change, explain the blocker in your final response.`,
+Before making any changes, explore the repository to understand its structure and existing code. If an AGENTS.md or CLAUDE.md read and follow its instructions. Then implement the requested change. If you cannot complete the requested change, explain the blocker in your final response. If all is good you may write a short sumary as final response.
+
+When done, write a short conventional-commits commit message to the file ".forge-ai-commit-msg" in the repository root. One line only. Do not commit or push.`,
 		ticket.Owner, ticket.Repo, ticket.Kind, ticket.Number, branch, base, ticket.HTMLURL, ticket.Title, ticket.Body, strings.TrimSpace(ticket.Instruction), gitPolicy)
 }
 
@@ -274,6 +301,16 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func readAndRemoveCommitMsg(workdir string) string {
+	path := filepath.Join(workdir, ".forge-ai-commit-msg")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	_ = os.Remove(path)
+	return strings.TrimSpace(string(data))
 }
 
 func branchForTicket(cfg config.Config, ticket forgejo.Ticket) string {
