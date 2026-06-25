@@ -24,10 +24,55 @@ services:
       FORGEJO_DEV_PASSWORD: ${FORGEJO_DEV_PASSWORD:-user-password}
       FORGEJO_DEV_EMAIL: ${FORGEJO_DEV_EMAIL:-forge-user@example.invalid}
       TRIGGER_LABEL: ${TRIGGER_LABEL:-ai}
-      WEBHOOK_TARGET_URL: ${WEBHOOK_TARGET_URL:-http://host.lima.internal:8080/webhook}
+      WEBHOOK_TARGET_URL: ${WEBHOOK_TARGET_URL:-http://forge-ai:8080/webhook}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:3000/api/v1/repos/${FORGEJO_BOOTSTRAP_USER:-forge-ai}/${FORGEJO_BOOTSTRAP_REPO:-demo} > /dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
       - "3000:3000"
       - "2222:22"
+
+  forge-ai:
+    profiles: [prod]
+    build:
+      context: .
+      args:
+        AGENT_UID: ${UID:-1000}
+        AGENT_GID: ${GID:-1000}
+    restart: unless-stopped
+    depends_on:
+      forgejo:
+        condition: service_healthy
+    ports:
+      - "${HTTP_PORT:-8080}:8080"
+    environment:
+      FORGEJO_URL: ${FORGEJO_URL:-http://forgejo:3000}
+      FORGEJO_TOKEN: ${FORGEJO_TOKEN:-}
+      FORGEJO_BOOTSTRAP_TOKEN: ${FORGEJO_BOOTSTRAP_TOKEN:-true}
+      FORGEJO_BOOTSTRAP_USER: ${FORGEJO_BOOTSTRAP_USER:-forge-ai}
+      FORGEJO_BOOTSTRAP_PASSWORD: ${FORGEJO_BOOTSTRAP_PASSWORD:-forge-ai-password}
+      CLONE_URL_BASE: ${CLONE_URL_BASE:-http://forgejo:3000}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+      TRIGGER_MENTION: ${TRIGGER_MENTION:-@forge-ai}
+      WORKSPACE_DIR: /var/lib/forge-ai/workspaces
+      BRANCH_PREFIX: ${BRANCH_PREFIX:-forge-ai}
+      CREATE_PR: ${CREATE_PR:-true}
+      MAX_CONCURRENT: ${MAX_CONCURRENT:-1}
+      AGENT_BIN: ${AGENT_BIN:-claude}
+      AGENT_ARGS: ${AGENT_ARGS:---dangerously-skip-permissions --allowedTools Bash,Read,Write,Edit,MultiEdit,Glob,Grep -p}
+      AGENT_ALLOW_GIT: ${AGENT_ALLOW_GIT:-false}
+      AGENT_TIMEOUT: ${AGENT_TIMEOUT:-30m}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - forge-ai-workspaces:/var/lib/forge-ai/workspaces
+      - ${CLAUDE_CONFIG_DIR:-${HOME}/.claude}:/home/agent/.claude
+      - ${CODEX_CONFIG_DIR:-${HOME}/.codex}:/home/agent/.codex
+
+volumes:
+  forge-ai-workspaces:

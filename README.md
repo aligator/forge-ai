@@ -58,6 +58,26 @@ docker compose down
 
 No Forgejo data volume or host bootstrap directory is used; after `docker compose down`, the Forgejo state is gone.
 
+## Production
+
+```bash
+FORGEJO_URL=https://forgejo.example.com \
+FORGEJO_TOKEN=<token> \
+docker compose --profile prod up -d
+```
+
+The `prod` profile builds the forge-ai image (includes claude, codex, opencode, and Homebrew for the `agent` user) and mounts AI CLI credentials from the host:
+
+| Volume | Default host path |
+|--------|------------------|
+| Claude config | `~/.claude` |
+| Codex config | `~/.codex` |
+| opencode config | `~/.config/opencode` |
+
+Override with `CLAUDE_CONFIG_DIR`, `CODEX_CONFIG_DIR`, `OPENCODE_CONFIG_DIR`. Workspaces persist in a named Docker volume (`forge-ai-workspaces`).
+
+`FORGEJO_URL` is required. All other variables have defaults matching the dev setup.
+
 ## Agent configuration
 
 For host dev, the agent runs on your machine, not inside Docker. That means normal subscription auth works as-is:
