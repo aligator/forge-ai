@@ -27,7 +27,11 @@ services:
       WEBHOOK_TARGET_URL: ${WEBHOOK_TARGET_URL:-http://forge-ai:8080/webhook}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
     healthcheck:
-      test: ["CMD-SHELL", "curl -fs http://localhost:3000/api/v1/repos/${FORGEJO_BOOTSTRAP_USER:-forge-ai}/${FORGEJO_BOOTSTRAP_REPO:-demo} > /dev/null"]
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fs http://localhost:3000/api/v1/repos/${FORGEJO_BOOTSTRAP_USER:-forge-ai}/${FORGEJO_BOOTSTRAP_REPO:-demo} > /dev/null",
+        ]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -65,7 +69,7 @@ services:
       CREATE_PR: ${CREATE_PR:-true}
       MAX_CONCURRENT: ${MAX_CONCURRENT:-1}
       AGENT_BIN: ${AGENT_BIN:-claude}
-      AGENT_ARGS: ${AGENT_ARGS:---dangerously-skip-permissions --allowedTools Bash,Read,Write,Edit,MultiEdit,Glob,Grep -p}
+      AGENT_ARGS: ${AGENT_ARGS:---dangerously-skip-permissions --allowedTools Bash,Read,Write,Edit,MultiEdit,Glob,Grep p --verbose -p}
       AGENT_ALLOW_GIT: ${AGENT_ALLOW_GIT:-false}
       AGENT_TIMEOUT: ${AGENT_TIMEOUT:-30m}
       LOG_LEVEL: ${LOG_LEVEL:-info}
