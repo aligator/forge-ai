@@ -32,19 +32,14 @@ RUN set -e; \
     else \
         useradd --create-home --uid 1000 --gid 1000 --shell /bin/bash agent; \
     fi; \
-    mkdir -p /var/lib/forge-ai/workspaces /home/agent/.codex /home/agent/.claude /home/agent/.config/opencode; \
-    chown -R agent:agent /var/lib/forge-ai /home/agent
+    mkdir -p /nix /var/lib/forge-ai/workspaces /home/agent/.codex /home/agent/.claude /home/agent/.config/opencode; \
+    chown -R agent:agent /nix /var/lib/forge-ai /home/agent
 
 USER agent
-ENV HOMEBREW_PREFIX=/home/agent/.homebrew
-ENV HOMEBREW_CELLAR=/home/agent/.homebrew/Cellar
-ENV HOMEBREW_REPOSITORY=/home/agent/.homebrew
-ENV PATH="/home/agent/.homebrew/bin:/home/agent/.homebrew/sbin:$PATH"
-RUN set -e; \
-    mkdir -p /home/agent/.homebrew; \
-    git clone --depth=1 https://github.com/Homebrew/brew /home/agent/.homebrew; \
-    /home/agent/.homebrew/bin/brew update --force --quiet; \
-    /home/agent/.homebrew/bin/brew --version
+ENV PATH="/home/agent/.nix-profile/bin:/home/agent/.local/bin:$PATH"
+RUN curl -sSL https://nixos.org/nix/install | sh -s -- --no-daemon \
+    && . /home/agent/.nix-profile/etc/profile.d/nix.sh \
+    && nix-channel --update
 
 COPY scripts/agent-config/claude.json      /home/agent/.claude.json
 COPY scripts/agent-config/claude-settings.json /home/agent/.claude/settings.json
@@ -56,7 +51,7 @@ USER root
 WORKDIR /var/lib/forge-ai
 EXPOSE 8080
 
-ENV AGENT_TOOL_HINTS="- Homebrew is installed at ~/.homebrew. Use it to install any CLI tools you need (e.g. brew install ripgrep). Homebrew may compile packages from source which can take several minutes — always let brew installs run to completion, never cancel or interrupt them.\n- Playwright MCP is available for browser automation and web scraping (headless Chromium)."
+ENV AGENT_TOOL_HINTS="- Nix is installed (single-user). Use it to install any CLI tools you need without root: nix-env -iA nixpkgs.ripgrep (prebuilt binaries, fast). Run . ~/.nix-profile/etc/profile.d/nix.sh first if nix commands are not found.\n- Playwright MCP is available for browser automation and web scraping (headless Chromium)."
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["/usr/local/bin/forge-ai"]
