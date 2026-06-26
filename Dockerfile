@@ -45,7 +45,9 @@ RUN set -e; \
 
 USER agent
 ENV PATH="/home/agent/.nix-profile/bin:/home/agent/.local/bin:$PATH"
-RUN curl -sSL https://nixos.org/nix/install | sh -s -- --no-daemon \
+RUN mkdir -p /home/agent/.config/nix \
+    && echo "filter-syscalls = false" > /home/agent/.config/nix/nix.conf \
+    && curl -sSL https://nixos.org/nix/install | sh -s -- --no-daemon \
     && . /home/agent/.nix-profile/etc/profile.d/nix.sh \
     && nix-channel --update
 
