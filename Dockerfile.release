@@ -8,7 +8,8 @@ RUN apt-get update \
     && npm cache clean --force \
     && rm -rf /var/lib/apt/lists/*
 
-COPY forge-ai /usr/local/bin/forge-ai
+ARG TARGETPLATFORM
+COPY ${TARGETPLATFORM}/forge-ai /usr/local/bin/forge-ai
 COPY scripts/forge-ai-mock-agent /usr/local/bin/forge-ai-mock-agent
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/forge-ai-mock-agent /usr/local/bin/docker-entrypoint.sh

@@ -36,6 +36,8 @@ checksum:
 
 dockers_v2:
   - id: forge-ai
+    ids:
+      - forge-ai
     dockerfile: Dockerfile.release
     images:
       - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/forge-ai"
@@ -52,6 +54,8 @@ dockers_v2:
       - scripts/docker-entrypoint.sh
 
   - id: forge-ai-latest
+    ids:
+      - forge-ai
     dockerfile: Dockerfile.release
     images:
       - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/forge-ai"
