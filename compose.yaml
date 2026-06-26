@@ -23,6 +23,8 @@ services:
       FORGEJO_DEV_USER: ${FORGEJO_DEV_USER:-forge-user}
       FORGEJO_DEV_PASSWORD: ${FORGEJO_DEV_PASSWORD:-user-password}
       FORGEJO_DEV_EMAIL: ${FORGEJO_DEV_EMAIL:-forge-user@example.invalid}
+      FORGEJO_AGENT_USERS: ${FORGEJO_AGENT_USERS:-claude,codex,opencode}
+      FORGEJO_AGENT_PASSWORD: ${FORGEJO_AGENT_PASSWORD:-agent-password}
       TRIGGER_LABEL: ${TRIGGER_LABEL:-ai}
       WEBHOOK_TARGET_URL: ${WEBHOOK_TARGET_URL:-http://forge-ai:8080/webhook}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
@@ -44,11 +46,8 @@ services:
 
   forge-ai:
     profiles: [prod]
-    build:
-      context: .
-      args:
-        AGENT_UID: ${UID:-1000}
-        AGENT_GID: ${GID:-1000}
+    build: .
+    pull_policy: build
     restart: unless-stopped
     depends_on:
       forgejo:
@@ -56,6 +55,8 @@ services:
     ports:
       - "${HTTP_PORT:-8080}:8080"
     environment:
+      AGENT_UID: ${UID:-1000}
+      AGENT_GID: ${GID:-1000}
       FORGEJO_URL: ${FORGEJO_URL:-http://forgejo:3000}
       FORGEJO_TOKEN: ${FORGEJO_TOKEN:-}
       FORGEJO_BOOTSTRAP_TOKEN: ${FORGEJO_BOOTSTRAP_TOKEN:-true}
@@ -63,20 +64,28 @@ services:
       FORGEJO_BOOTSTRAP_PASSWORD: ${FORGEJO_BOOTSTRAP_PASSWORD:-forge-ai-password}
       CLONE_URL_BASE: ${CLONE_URL_BASE:-http://forgejo:3000}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
-      TRIGGER_MENTION: ${TRIGGER_MENTION:-@forge-ai}
       WORKSPACE_DIR: /var/lib/forge-ai/workspaces
       BRANCH_PREFIX: ${BRANCH_PREFIX:-forge-ai}
       CREATE_PR: ${CREATE_PR:-true}
-      MAX_CONCURRENT: ${MAX_CONCURRENT:-1}
-      AGENT_BIN: ${AGENT_BIN:-claude}
-      AGENT_ARGS: ${AGENT_ARGS:---dangerously-skip-permissions --allowedTools Bash,Read,Write,Edit,MultiEdit,Glob,Grep p --verbose -p}
+      MAX_CONCURRENT: ${MAX_CONCURRENT:-3}
       AGENT_ALLOW_GIT: ${AGENT_ALLOW_GIT:-false}
-      AGENT_TIMEOUT: ${AGENT_TIMEOUT:-30m}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      AGENT_0_USER: ${AGENT_0_USER:-claude}
+      AGENT_0_BIN: ${AGENT_0_BIN:-claude}
+      AGENT_0_ARGS: ${AGENT_0_ARGS:---dangerously-skip-permissions --output-format stream-json -p}
+      AGENT_0_TIMEOUT: ${AGENT_0_TIMEOUT:-30m}
+      AGENT_1_USER: ${AGENT_1_USER:-codex}
+      AGENT_1_BIN: ${AGENT_1_BIN:-codex}
+      AGENT_1_ARGS: ${AGENT_1_ARGS:-exec --dangerously-bypass-approvals-and-sandbox}
+      AGENT_1_TIMEOUT: ${AGENT_1_TIMEOUT:-30m}
+      AGENT_2_USER: ${AGENT_2_USER:-opencode}
+      AGENT_2_BIN: ${AGENT_2_BIN:-opencode}
+      AGENT_2_ARGS: ${AGENT_2_ARGS:-run}
+      AGENT_2_TIMEOUT: ${AGENT_2_TIMEOUT:-30m}
     volumes:
       - forge-ai-workspaces:/var/lib/forge-ai/workspaces
-      - ${CLAUDE_CONFIG_DIR:-${HOME}/.claude}:/home/agent/.claude
-      - ${CODEX_CONFIG_DIR:-${HOME}/.codex}:/home/agent/.codex
+      - ${CLAUDE_CREDENTIALS:-${HOME}/.claude/.credentials.json}:/home/agent/.claude/.credentials.json:ro
+      - ${CODEX_CREDENTIALS:-${HOME}/.codex/auth.json}:/home/agent/.codex/auth.json:ro
 
 volumes:
   forge-ai-workspaces:

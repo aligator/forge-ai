@@ -36,9 +36,7 @@ checksum:
 
 dockers_v2:
   - id: forge-ai
-    ids:
-      - forge-ai
-    dockerfile: Dockerfile.release
+    dockerfile: Dockerfile
     images:
       - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/forge-ai"
     tags:
@@ -49,14 +47,9 @@ dockers_v2:
     labels:
       org.opencontainers.image.version: "{{ .Version }}"
       org.opencontainers.image.revision: "{{ .FullCommit }}"
-    extra_files:
-      - scripts/forge-ai-mock-agent
-      - scripts/docker-entrypoint.sh
 
   - id: forge-ai-latest
-    ids:
-      - forge-ai
-    dockerfile: Dockerfile.release
+    dockerfile: Dockerfile
     images:
       - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/forge-ai"
     tags:
@@ -67,9 +60,6 @@ dockers_v2:
     labels:
       org.opencontainers.image.version: "{{ .Version }}"
       org.opencontainers.image.revision: "{{ .FullCommit }}"
-    extra_files:
-      - scripts/forge-ai-mock-agent
-      - scripts/docker-entrypoint.sh
     disable: "{{ if .Prerelease }}true{{ end }}"
 
 changelog:

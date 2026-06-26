@@ -11,6 +11,14 @@ import (
 	"github.com/joho/godotenv"
 )
 
+type AgentRoute struct {
+	Mention  string
+	User     string // Forgejo username this agent posts as; empty = global bootstrap user
+	Password string // Forgejo password for auto-generating token at startup; empty = skip
+	Token    string // Forgejo token for this agent; empty = global token
+	Agent    AgentConfig
+}
+
 type Config struct {
 	HTTPAddr                string
 	ForgejoURL              string
@@ -21,13 +29,13 @@ type Config struct {
 	ForgejoBootstrapEnabled bool
 	CloneURLBase            string
 	WebhookSecret           string
-	TriggerMention          string
+	Agents                  []AgentRoute
+	AgentToolHints          string
 	WorkspaceDir            string
 	BranchPrefix            string
 	CreatePR                bool
 	MaxConcurrent           int
 	AgentAllowGit           bool
-	Agent                   AgentConfig
 	Git                     GitConfig
 }
 
@@ -63,18 +71,13 @@ func Load() (Config, error) {
 		ForgejoBootstrapEnabled: envBool("FORGEJO_BOOTSTRAP_TOKEN", true),
 		CloneURLBase:            strings.TrimRight(env("CLONE_URL_BASE", "http://localhost:3000"), "/"),
 		WebhookSecret:           os.Getenv("WEBHOOK_SECRET"),
-		TriggerMention:          env("TRIGGER_MENTION", "@forge-ai"),
+		Agents:                  loadAgentRoutes(),
+		AgentToolHints:          os.Getenv("AGENT_TOOL_HINTS"),
 		WorkspaceDir:            env("WORKSPACE_DIR", ".forge-ai/workspaces"),
 		BranchPrefix:            env("BRANCH_PREFIX", "forge-ai"),
 		CreatePR:                envBool("CREATE_PR", true),
 		MaxConcurrent:           envInt("MAX_CONCURRENT", 1),
 		AgentAllowGit:           agentAllowGit,
-		Agent: AgentConfig{
-			Bin:             os.Getenv("AGENT_BIN"),
-			Args:            fields(os.Getenv("AGENT_ARGS")),
-			CommandTemplate: os.Getenv("AGENT_COMMAND"),
-			Timeout:         envDuration("AGENT_TIMEOUT", 30*time.Minute),
-		},
 		Git: GitConfig{
 			RemoteName: env("GIT_REMOTE", "origin"),
 			UserName:   env("GIT_USER_NAME", "forge-ai"),
@@ -88,6 +91,52 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
+// loadAgentRoutes loads agent routes from numbered env vars (AGENT_0_USER, AGENT_0_BIN, ...).
+// The mention is derived as "@"+user. Falls back to legacy TRIGGER_MENTION + AGENT_BIN/AGENT_COMMAND if no numbered routes found.
+func loadAgentRoutes() []AgentRoute {
+	var routes []AgentRoute
+	for i := 0; ; i++ {
+		prefix := fmt.Sprintf("AGENT_%d_", i)
+		if os.Getenv(prefix+"USER") == "" {
+			break
+		}
+		token := os.Getenv(prefix + "TOKEN")
+		if token == "" {
+			if tf := os.Getenv(prefix + "TOKEN_FILE"); tf != "" {
+				if data, err := os.ReadFile(tf); err == nil {
+					token = strings.TrimSpace(string(data))
+				}
+			}
+		}
+		user := os.Getenv(prefix + "USER")
+		routes = append(routes, AgentRoute{
+			Mention:  "@" + user,
+			User:     user,
+			Password: os.Getenv(prefix + "PASSWORD"),
+			Token:    token,
+			Agent: AgentConfig{
+				Bin:             os.Getenv(prefix + "BIN"),
+				Args:            fields(os.Getenv(prefix + "ARGS")),
+				CommandTemplate: os.Getenv(prefix + "COMMAND"),
+				Timeout:         envDuration(prefix+"TIMEOUT", 30*time.Minute),
+			},
+		})
+	}
+	if len(routes) > 0 {
+		return routes
+	}
+	// Backward compat: single route from legacy vars
+	return []AgentRoute{{
+		Mention: env("TRIGGER_MENTION", "@forge-ai"),
+		Agent: AgentConfig{
+			Bin:             os.Getenv("AGENT_BIN"),
+			Args:            fields(os.Getenv("AGENT_ARGS")),
+			CommandTemplate: os.Getenv("AGENT_COMMAND"),
+			Timeout:         envDuration("AGENT_TIMEOUT", 30*time.Minute),
+		},
+	}}
+}
+
 func (c Config) validate() error {
 	var missing []string
 	if c.ForgejoURL == "" {
@@ -96,27 +145,31 @@ func (c Config) validate() error {
 	if c.ForgejoToken == "" && !c.ForgejoBootstrapEnabled {
 		missing = append(missing, "FORGEJO_TOKEN")
 	}
-	if c.TriggerMention == "" {
-		missing = append(missing, "TRIGGER_MENTION")
-	}
 	if c.WorkspaceDir == "" {
 		missing = append(missing, "WORKSPACE_DIR")
 	}
-	if c.Agent.CommandTemplate == "" && c.Agent.Bin == "" {
-		missing = append(missing, "AGENT_BIN or AGENT_COMMAND")
-	}
-	if c.Agent.Timeout <= 0 {
-		return errors.New("AGENT_TIMEOUT must be positive")
-	}
 	if c.MaxConcurrent <= 0 {
 		return errors.New("MAX_CONCURRENT must be positive")
+	}
+	if len(c.Agents) == 0 {
+		missing = append(missing, "AGENT_0_USER or TRIGGER_MENTION")
+	}
+	for i, route := range c.Agents {
+		if route.User == "" && route.Mention == "" {
+			missing = append(missing, fmt.Sprintf("AGENT_%d_USER", i))
+		}
+		if route.Agent.CommandTemplate == "" && route.Agent.Bin == "" {
+			missing = append(missing, fmt.Sprintf("AGENT_%d_BIN or AGENT_%d_COMMAND", i, i))
+		}
+		if route.Agent.Timeout <= 0 {
+			return fmt.Errorf("AGENT_%d_TIMEOUT must be positive", i)
+		}
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required config: %s", strings.Join(missing, ", "))
 	}
 	return nil
 }
-
 
 func tokenFromEnv() (string, error) {
 	if token := os.Getenv("FORGEJO_TOKEN"); token != "" {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"codeberg.org/forge-ai/internal/agent"
 	"codeberg.org/forge-ai/internal/config"
 	"codeberg.org/forge-ai/internal/forgejo"
 )
@@ -46,7 +47,9 @@ func TestRewriteCloneURL(t *testing.T) {
 func TestShouldRunOnlyForMention(t *testing.T) {
 	svc := New(Options{
 		Config: config.Config{
-			TriggerMention:       "@forge-ai",
+			Agents: []config.AgentRoute{
+				{User: "forge-ai", Mention: "@forge-ai"},
+			},
 			ForgejoBootstrapUser: "forge-ai",
 			MaxConcurrent:        1,
 		},
@@ -65,6 +68,56 @@ func TestShouldRunOnlyForMention(t *testing.T) {
 	}
 }
 
+func TestShouldRunForAnyConfiguredMention(t *testing.T) {
+	svc := New(Options{
+		Config: config.Config{
+			Agents: []config.AgentRoute{
+				{User: "codex", Mention: "@codex"},
+				{User: "claude", Mention: "@claude"},
+				{User: "opencode", Mention: "@opencode"},
+			},
+			ForgejoBootstrapUser: "forge-ai",
+			MaxConcurrent:        1,
+		},
+	})
+
+	for _, mention := range []string{"@codex", "@claude", "@opencode"} {
+		if !svc.shouldRun(forgejo.WebhookPayload{Sender: &forgejo.User{Login: "user"}}, forgejo.Ticket{Instruction: mention + " do something"}) {
+			t.Fatalf("expected %q to trigger", mention)
+		}
+	}
+
+	if svc.shouldRun(forgejo.WebhookPayload{Sender: &forgejo.User{Login: "user"}}, forgejo.Ticket{Instruction: "@other do something"}) {
+		t.Fatal("expected unknown mention not to trigger")
+	}
+}
+
+func TestFindAgentPicksCorrectRunner(t *testing.T) {
+	codexRunner := &stubAgent{name: "codex"}
+	claudeRunner := &stubAgent{name: "claude"}
+
+	svc := New(Options{
+		Config: config.Config{
+			Agents: []config.AgentRoute{
+				{User: "codex", Mention: "@codex"},
+				{User: "claude", Mention: "@claude"},
+			},
+			MaxConcurrent: 1,
+		},
+		Agents: map[string]Agent{
+			"@codex":  codexRunner,
+			"@claude": claudeRunner,
+		},
+	})
+
+	if _, got := svc.findAgent("@codex please fix this"); got != codexRunner {
+		t.Fatal("expected codex runner")
+	}
+	if _, got := svc.findAgent("@claude please fix this"); got != claudeRunner {
+		t.Fatal("expected claude runner")
+	}
+}
+
 func TestPostStartAckReactsToComment(t *testing.T) {
 	forge := &recordingForgejo{}
 	svc := New(Options{
@@ -72,7 +125,7 @@ func TestPostStartAckReactsToComment(t *testing.T) {
 		Forgejo: forge,
 	})
 
-	err := svc.postStartAck(context.Background(), forgejo.Ticket{
+	err := svc.postStartAckWith(context.Background(), forge, forgejo.Ticket{
 		Owner:       "ac",
 		Repo:        "demo",
 		Number:      1,
@@ -97,7 +150,7 @@ func TestPostStartAckRepliesEyesWithoutCommentID(t *testing.T) {
 		Forgejo: forge,
 	})
 
-	err := svc.postStartAck(context.Background(), forgejo.Ticket{
+	err := svc.postStartAckWith(context.Background(), forge, forgejo.Ticket{
 		Owner:       "ac",
 		Repo:        "demo",
 		Number:      1,
@@ -121,7 +174,7 @@ func TestPostStartAckRepliesEyesWhenReactionFails(t *testing.T) {
 		Forgejo: forge,
 	})
 
-	err := svc.postStartAck(context.Background(), forgejo.Ticket{
+	err := svc.postStartAckWith(context.Background(), forge, forgejo.Ticket{
 		Owner:       "ac",
 		Repo:        "demo",
 		Number:      1,
@@ -143,7 +196,7 @@ func TestPostSuccessPostsCommentWhenReactionFails(t *testing.T) {
 		Forgejo: forge,
 	})
 
-	err := svc.postSuccess(context.Background(), forgejo.Ticket{
+	err := svc.postSuccess(context.Background(), forge, forgejo.Ticket{
 		Owner:       "ac",
 		Repo:        "demo",
 		Number:      1,
@@ -156,6 +209,14 @@ func TestPostSuccessPostsCommentWhenReactionFails(t *testing.T) {
 	if forge.commentBody != "done" {
 		t.Fatalf("commentBody = %q, want done", forge.commentBody)
 	}
+}
+
+type stubAgent struct {
+	name string
+}
+
+func (a *stubAgent) Run(_ context.Context, _, _ string) (agent.Result, error) {
+	return agent.Result{}, nil
 }
 
 type recordingForgejo struct {

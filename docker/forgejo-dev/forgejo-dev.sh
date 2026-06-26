@@ -12,6 +12,8 @@ set -eu
 : "${FORGEJO_DEV_PASSWORD:=user-password}"
 : "${FORGEJO_DEV_EMAIL:=forge-user@example.invalid}"
 : "${FORGEJO_BOOTSTRAP_REPO:=demo}"
+: "${FORGEJO_AGENT_USERS:=}"
+: "${FORGEJO_AGENT_PASSWORD:=agent-password}"
 : "${TRIGGER_LABEL:=ai}"
 : "${FORGEJO_BOOTSTRAP_ISSUE:=true}"
 : "${WEBHOOK_TARGET_URL:=http://host.lima.internal:8080/webhook}"
@@ -61,6 +63,23 @@ run_forgejo admin user create \
 if ! ensure_user "$FORGEJO_DEV_USER"; then
 	cat /tmp/forgejo-dev-user-create.log >&2
 	exit 1
+fi
+
+if [ -n "$FORGEJO_AGENT_USERS" ]; then
+	echo "$FORGEJO_AGENT_USERS" | tr ',' '\n' | while read -r agent_user; do
+		agent_user="$(echo "$agent_user" | tr -d '[:space:]')"
+		[ -z "$agent_user" ] && continue
+		run_forgejo admin user create \
+			--username "$agent_user" \
+			--password "$FORGEJO_AGENT_PASSWORD" \
+			--email "${agent_user}@example.invalid" \
+			--must-change-password=false >/dev/null 2>&1 || true
+		if ensure_user "$agent_user"; then
+			echo "Agent user ready: ${agent_user}"
+		else
+			echo "Warning: could not create agent user: ${agent_user}" >&2
+		fi
+	done
 fi
 
 token="$(
@@ -145,14 +164,13 @@ fi
 
 cat <<EOF
 Forgejo dev instance is ready.
-URL:      ${FORGEJO_URL}
-User:     ${FORGEJO_BOOTSTRAP_USER}
-Password: ${FORGEJO_BOOTSTRAP_PASSWORD}
-Dev user: ${FORGEJO_DEV_USER}
-Dev pass: ${FORGEJO_DEV_PASSWORD}
-Repo:     ${FORGEJO_BOOTSTRAP_USER}/${FORGEJO_BOOTSTRAP_REPO}
-Issue:    Demo: run forge-ai
-Webhook:  ${WEBHOOK_TARGET_URL}
+URL:        ${FORGEJO_URL}
+Bot user:   ${FORGEJO_BOOTSTRAP_USER} / ${FORGEJO_BOOTSTRAP_PASSWORD}
+Dev user:   ${FORGEJO_DEV_USER} / ${FORGEJO_DEV_PASSWORD}
+Repo:       ${FORGEJO_BOOTSTRAP_USER}/${FORGEJO_BOOTSTRAP_REPO}
+Issue:      Demo: run forge-ai
+Webhook:    ${WEBHOOK_TARGET_URL}
+Agents:     ${FORGEJO_AGENT_USERS:-none} (password: ${FORGEJO_AGENT_PASSWORD})
 EOF
 
 wait "$forgejo_pid"
