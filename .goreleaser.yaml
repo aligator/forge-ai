@@ -37,6 +37,8 @@ checksum:
 dockers_v2:
   - id: forge-ai
     dockerfile: Dockerfile
+    build_args:
+      BINARY_PROVIDER: prebuilt
     extra_files:
       - scripts/docker-entrypoint.sh
       - scripts/forge-ai-mock-agent
@@ -57,6 +59,8 @@ dockers_v2:
 
   - id: forge-ai-latest
     dockerfile: Dockerfile
+    build_args:
+      BINARY_PROVIDER: prebuilt
     extra_files:
       - scripts/docker-entrypoint.sh
       - scripts/forge-ai-mock-agent

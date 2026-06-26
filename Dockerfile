@@ -1,9 +1,17 @@
+ARG BINARY_PROVIDER=build
+
 FROM golang:1.26-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/forge-ai .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /forge-ai .
+
+FROM scratch AS prebuilt
+ARG TARGETARCH
+COPY linux/${TARGETARCH}/forge-ai /forge-ai
+
+FROM ${BINARY_PROVIDER} AS binary-provider
 
 FROM node:24-bookworm
 
@@ -16,7 +24,7 @@ RUN apt-get update \
     && npm cache clean --force \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=build /out/forge-ai /usr/local/bin/forge-ai
+COPY --from=binary-provider /forge-ai /usr/local/bin/forge-ai
 COPY scripts/forge-ai-mock-agent /usr/local/bin/forge-ai-mock-agent
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/forge-ai-mock-agent /usr/local/bin/docker-entrypoint.sh
