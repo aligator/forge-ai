@@ -1,13 +1,5 @@
-FROM golang:1.26-alpine AS build
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/forge-ai .
-
 FROM node:24-bookworm
 
-# System deps — build-essential and file required by Homebrew
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates git openssh-client bash curl \
@@ -16,8 +8,7 @@ RUN apt-get update \
     && npm cache clean --force \
     && rm -rf /var/lib/apt/lists/*
 
-# forge-ai binary — root-owned; non-root users cannot delete or overwrite it
-COPY --from=build /out/forge-ai /usr/local/bin/forge-ai
+COPY forge-ai /usr/local/bin/forge-ai
 COPY scripts/forge-ai-mock-agent /usr/local/bin/forge-ai-mock-agent
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/forge-ai-mock-agent /usr/local/bin/docker-entrypoint.sh
