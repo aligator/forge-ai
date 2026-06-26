@@ -1,4 +1,4 @@
-# forge-ai
+# Forge AI
 
 `forge-ai` listens for Forgejo webhooks, starts an AI coding agent for labelled issues or pull requests, pushes the resulting branch, comments back on the ticket, and creates a pull request for issue-triggered work.
 
