@@ -37,6 +37,13 @@ checksum:
 dockers_v2:
   - id: forge-ai
     dockerfile: Dockerfile
+    extra_files:
+      - scripts/docker-entrypoint.sh
+      - scripts/forge-ai-mock-agent
+      - scripts/agent-config/claude.json
+      - scripts/agent-config/claude-settings.json
+      - scripts/agent-config/codex.toml
+      - scripts/agent-config/opencode.json
     images:
       - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/forge-ai"
     tags:
@@ -50,6 +57,13 @@ dockers_v2:
 
   - id: forge-ai-latest
     dockerfile: Dockerfile
+    extra_files:
+      - scripts/docker-entrypoint.sh
+      - scripts/forge-ai-mock-agent
+      - scripts/agent-config/claude.json
+      - scripts/agent-config/claude-settings.json
+      - scripts/agent-config/codex.toml
+      - scripts/agent-config/opencode.json
     images:
       - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/forge-ai"
     tags:
