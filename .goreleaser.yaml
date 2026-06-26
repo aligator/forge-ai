@@ -34,79 +34,39 @@ archives:
 checksum:
   name_template: checksums.txt
 
-dockers:
-  - id: forge-ai-amd64
-    goos: linux
-    goarch: amd64
-    use: buildx
+dockers_v2:
+  - id: forge-ai
     dockerfile: Dockerfile.release
-    image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/forge-ai:{{ .Version }}-amd64"
-    build_flag_templates:
-      - "--platform=linux/amd64"
-      - "--label=org.opencontainers.image.version={{ .Version }}"
-      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+    images:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/forge-ai"
+    tags:
+      - "{{ .Version }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
     extra_files:
       - scripts/forge-ai-mock-agent
       - scripts/docker-entrypoint.sh
 
-  - id: forge-ai-arm64
-    goos: linux
-    goarch: arm64
-    use: buildx
+  - id: forge-ai-latest
     dockerfile: Dockerfile.release
-    image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/forge-ai:{{ .Version }}-arm64"
-    build_flag_templates:
-      - "--platform=linux/arm64"
-      - "--label=org.opencontainers.image.version={{ .Version }}"
-      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+    images:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/forge-ai"
+    tags:
+      - "latest"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
     extra_files:
       - scripts/forge-ai-mock-agent
       - scripts/docker-entrypoint.sh
-
-  - id: forge-ai-amd64-latest
-    goos: linux
-    goarch: amd64
-    use: buildx
-    dockerfile: Dockerfile.release
-    image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/forge-ai:latest-amd64"
-    build_flag_templates:
-      - "--platform=linux/amd64"
-      - "--label=org.opencontainers.image.version={{ .Version }}"
-      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
-    extra_files:
-      - scripts/forge-ai-mock-agent
-      - scripts/docker-entrypoint.sh
-    skip_push: "{{ if .Prerelease }}true{{ end }}"
-
-  - id: forge-ai-arm64-latest
-    goos: linux
-    goarch: arm64
-    use: buildx
-    dockerfile: Dockerfile.release
-    image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/forge-ai:latest-arm64"
-    build_flag_templates:
-      - "--platform=linux/arm64"
-      - "--label=org.opencontainers.image.version={{ .Version }}"
-      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
-    extra_files:
-      - scripts/forge-ai-mock-agent
-      - scripts/docker-entrypoint.sh
-    skip_push: "{{ if .Prerelease }}true{{ end }}"
-
-docker_manifests:
-  - name_template: "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/forge-ai:{{ .Version }}"
-    image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/forge-ai:{{ .Version }}-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/forge-ai:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/forge-ai:latest"
-    image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/forge-ai:latest-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/forge-ai:latest-arm64"
-    skip_push: "{{ if .Prerelease }}true{{ end }}"
+    disable: "{{ if .Prerelease }}true{{ end }}"
 
 changelog:
   sort: asc
