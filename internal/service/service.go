@@ -249,6 +249,7 @@ func (s *Service) run(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, ag
 		_ = s.postFailureWithOutput(ctx, fc, ticket, err, result.Output)
 		return err
 	}
+	defer s.removeWorkspace(workdir)
 
 	prText := ""
 	if s.cfg.CreatePR && ticket.Kind == "issue" {
@@ -269,6 +270,18 @@ func (s *Service) run(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, ag
 
 	s.logger.Info("ticket workflow completed", "ticket", ticket.Ref(), "branch", branch, "committed", committed)
 	return nil
+}
+
+func (s *Service) removeWorkspace(workdir string) {
+	if workdir == "" || filepath.Clean(workdir) == filepath.Clean(s.cfg.WorkspaceDir) {
+		s.logger.Warn("skip unsafe workspace cleanup", "workdir", workdir)
+		return
+	}
+	if err := os.RemoveAll(workdir); err != nil {
+		s.logger.Warn("workspace cleanup failed", "workdir", workdir, "error", err)
+		return
+	}
+	s.logger.Info("workspace removed", "workdir", workdir)
 }
 
 // routeToken returns the Forgejo token for the given Forgejo client by looking up which route it belongs to.
