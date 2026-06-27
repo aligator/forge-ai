@@ -11,7 +11,7 @@ FROM scratch AS prebuilt
 ARG TARGETARCH
 COPY linux/${TARGETARCH}/forge-ai /forge-ai
 
-FROM golang:1.26-bookworm AS forgejo-mcp-builder
+FROM golang:1.26-trixie AS forgejo-mcp-builder
 ARG FORGEJO_MCP_VERSION=v2.30.0
 WORKDIR /src
 RUN git clone --depth 1 --branch "${FORGEJO_MCP_VERSION}" https://codeberg.org/goern/forgejo-mcp.git . \
@@ -19,7 +19,7 @@ RUN git clone --depth 1 --branch "${FORGEJO_MCP_VERSION}" https://codeberg.org/g
 
 FROM ${BINARY_PROVIDER} AS binary-provider
 
-FROM node:24-bookworm
+FROM node:24-trixie
 ARG TARGETARCH
 ARG RTK_VERSION=0.42.4
 
