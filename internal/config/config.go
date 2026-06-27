@@ -73,7 +73,7 @@ func Load() (Config, error) {
 		CloneURLBase:            strings.TrimRight(env("CLONE_URL_BASE", "http://localhost:3000"), "/"),
 		WebhookSecret:           os.Getenv("WEBHOOK_SECRET"),
 		Agents:                  loadAgentRoutes(),
-		AgentToolHints:          os.Getenv("AGENT_TOOL_HINTS"),
+		AgentToolHints:          strings.ReplaceAll(os.Getenv("AGENT_TOOL_HINTS"), `\n`, "\n"),
 		WorkspaceDir:            env("WORKSPACE_DIR", ".forge-ai/workspaces"),
 		BranchPrefix:            env("BRANCH_PREFIX", "forge-ai"),
 		CreatePR:                envBool("CREATE_PR", true),

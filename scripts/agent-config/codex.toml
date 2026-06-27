@@ -3,5 +3,6 @@ command = "npx"
 args = ["@playwright/mcp", "--headless", "--browser", "chromium"]
 
 [mcp_servers.forgejo]
-command = "forgejo-mcp"
-args = ["--transport", "stdio"]
+command = "sh"
+args = ["-c", "exec forgejo-mcp --transport stdio --url \"${FORGEJO_URL:-http://localhost:3000}\""]
+env_vars = ["FORGEJO_URL", "FORGEJO_ACCESS_TOKEN"]

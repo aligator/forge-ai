@@ -14,7 +14,6 @@ set -eu
 : "${FORGEJO_BOOTSTRAP_REPO:=demo}"
 : "${FORGEJO_AGENT_USERS:=}"
 : "${FORGEJO_AGENT_PASSWORD:=agent-password}"
-: "${TRIGGER_LABEL:=ai}"
 : "${FORGEJO_BOOTSTRAP_ISSUE:=true}"
 : "${WEBHOOK_TARGET_URL:=http://host.lima.internal:8080/webhook}"
 : "${WEBHOOK_SECRET:=}"
@@ -140,6 +139,11 @@ It includes a Go-oriented Nix flake and `.forge-ai/instructions.md` so agents ha
 EOF
 )"
 
+seed_file_if_missing ".gitignore" "seed demo gitignore" "$(cat <<'EOF'
+.playwright-mcp/
+EOF
+)"
+
 seed_file_if_missing "flake.nix" "seed demo Nix flake" "$(cat <<'EOF'
 {
   description = "forge-ai demo Go development shell";
@@ -160,11 +164,19 @@ seed_file_if_missing "flake.nix" "seed demo Nix flake" "$(cat <<'EOF'
       devShells = forAllSystems (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
+          gofmt = pkgs.writeShellApplication {
+            name = "gofmt";
+            runtimeInputs = [ pkgs.go ];
+            text = ''
+              exec go tool gofmt "$@"
+            '';
+          };
         in
         {
           default = pkgs.mkShell {
             packages = with pkgs; [
               go
+              gofmt
               gopls
               gotools
               gofumpt
@@ -173,6 +185,10 @@ seed_file_if_missing "flake.nix" "seed demo Nix flake" "$(cat <<'EOF'
 
             shellHook = ''
               echo "Go $(go version)"
+              export GOPATH="''${GOPATH:-$PWD/.go}"
+              export GOBIN="''${GOBIN:-$GOPATH/bin}"
+              mkdir -p "$GOBIN"
+              export PATH="$GOBIN:$PATH"
               echo "Run: go test ./..."
             '';
           };
@@ -185,28 +201,11 @@ EOF
 seed_file_if_missing ".forge-ai/instructions.md" "seed forge-ai instructions" "$(cat <<'EOF'
 # forge-ai instructions
 
-Read this file before changing code.
-
-- Use the Nix dev shell when Go tooling is needed: `nix develop`.
-- Keep changes small and focused on the ticket.
-- Follow existing Go style.
-- Format changed Go files with `gofmt` or `gofumpt`.
-- Run `go test ./...` before finishing when practical.
-- Do not commit, push, rebase, reset, or switch branches unless forge-ai explicitly allows git for this run.
-- Write the final commit message to `.forge-ai-commit-msg`.
+- Go tooling is available through `nix develop`; lock-file writes are disabled by default. Set `NIX_WRITE_LOCK=1` only when intentionally updating `flake.lock`; set `NIX_VERBOSE=1` only when debugging Nix failures.
+- For Go changes, run `gofmt` and `go test ./...` when practical.
+- Do not read `flake.nix` unless tooling is missing or Nix details are needed.
+- For web checks, avoid port 8080; use a high free port and stop background servers before finishing.
 EOF
-)"
-
-curl -fsS -X POST -H "$auth_header" -H "Content-Type: application/json" \
-	-d "$(jq -n --arg name "$TRIGGER_LABEL" '{name:$name, color:"#0e8a16", description:"Run forge-ai"}')" \
-	"${api}/repos/${FORGEJO_BOOTSTRAP_USER}/${FORGEJO_BOOTSTRAP_REPO}/labels" >/dev/null 2>&1 || true
-
-label_id="$(
-	curl -fsS \
-		-H "$auth_header" \
-		"${api}/repos/${FORGEJO_BOOTSTRAP_USER}/${FORGEJO_BOOTSTRAP_REPO}/labels" \
-		| jq -r --arg name "$TRIGGER_LABEL" '.[] | select(.name == $name) | .id' \
-		| head -1
 )"
 
 hooks="$(curl -fsS -H "$auth_header" "${api}/repos/${FORGEJO_BOOTSTRAP_USER}/${FORGEJO_BOOTSTRAP_REPO}/hooks")"
@@ -234,17 +233,16 @@ else
 	}
 fi
 
-if [ "$FORGEJO_BOOTSTRAP_ISSUE" = "true" ] && [ -n "$label_id" ]; then
+if [ "$FORGEJO_BOOTSTRAP_ISSUE" = "true" ]; then
 	issues="$(
 		curl -fsS -H "$auth_header" \
 			"${api}/repos/${FORGEJO_BOOTSTRAP_USER}/${FORGEJO_BOOTSTRAP_REPO}/issues?state=all"
 	)"
 	if ! printf '%s' "$issues" | jq -e '.[] | select(.title == "Demo: run forge-ai")' >/dev/null; then
 		curl -fsS -X POST -H "$auth_header" -H "Content-Type: application/json" \
-			-d "$(jq -n --argjson label_id "$label_id" '{
+			-d "$(jq -n '{
 				title:"Demo: run forge-ai",
-				body:"This issue is created by the Forgejo dev container. Start `go run .`, then add or re-add the `ai` label to trigger forge-ai.",
-				labels:[$label_id]
+				body:"Build a simple Go hello-world program.\n\nPlan:\n1. Create a minimal Go module.\n2. Add `main.go` with a `main` package.\n3. Print `Hello, world!` to stdout.\n4. Add a small test for the output.\n5. Run `go test ./...`."
 			}')" \
 			"${api}/repos/${FORGEJO_BOOTSTRAP_USER}/${FORGEJO_BOOTSTRAP_REPO}/issues" >/dev/null
 	fi

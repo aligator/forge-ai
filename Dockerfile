@@ -20,15 +20,30 @@ RUN git clone --depth 1 --branch "${FORGEJO_MCP_VERSION}" https://codeberg.org/g
 FROM ${BINARY_PROVIDER} AS binary-provider
 
 FROM node:24-bookworm
+ARG TARGETARCH
+ARG RTK_VERSION=0.42.4
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates git openssh-client bash curl \
-        build-essential procps file ruby gosu \
+        build-essential procps file ruby gosu jq \
     && npm install -g @openai/codex @anthropic-ai/claude-code opencode-ai @playwright/mcp \
     && npx playwright install-deps chromium \
     && npm cache clean --force \
     && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+        amd64) rtk_asset="rtk-x86_64-unknown-linux-musl.tar.gz" ;; \
+        arm64) rtk_asset="rtk-aarch64-unknown-linux-gnu.tar.gz" ;; \
+        *) echo "unsupported TARGETARCH for rtk: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    mkdir -p /tmp/rtk; \
+    curl -fsSL "https://github.com/rtk-ai/rtk/releases/download/v${RTK_VERSION}/${rtk_asset}" \
+        | tar -xz -C /tmp/rtk; \
+    install -m 0755 "$(find /tmp/rtk -type f -name rtk | head -1)" /usr/local/bin/rtk; \
+    rm -rf /tmp/rtk; \
+    rtk --version
 
 COPY --from=binary-provider /forge-ai /usr/local/bin/forge-ai
 COPY --from=forgejo-mcp-builder /go/bin/forgejo-mcp /usr/local/bin/forgejo-mcp
@@ -68,7 +83,7 @@ USER root
 WORKDIR /var/lib/forge-ai
 EXPOSE 8080
 
-ENV AGENT_TOOL_HINTS="- Nix is installed (single-user). Use it to install any CLI tools you need without root: nix-env -iA nixpkgs.ripgrep (prebuilt binaries, fast). Run . ~/.nix-profile/etc/profile.d/nix.sh first if nix commands are not found.\n- Playwright MCP is available for browser automation and web scraping (headless Chromium).\n- Forgejo MCP is available (MCP server name: forgejo). Use it to read issue comments, list PRs, fetch file contents, search code, and more. The credentials and server URL are pre-configured via environment variables."
+ENV AGENT_TOOL_HINTS="- rtk is installed at /usr/local/bin/rtk. Prefix shell commands with rtk.\n- Nix is installed (single-user). Use it to install any CLI tools you need without root: nix-env -iA nixpkgs.ripgrep (prebuilt binaries, fast). Run . ~/.nix-profile/etc/profile.d/nix.sh first if nix commands are not found.\n- Playwright MCP is available for browser automation and web scraping (headless Chromium).\n- Forgejo MCP is available (MCP server name: forgejo). Use it to read issue comments, list PRs, fetch file contents, search code, and more. The credentials and server URL are pre-configured via environment variables."
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["/usr/local/bin/forge-ai"]

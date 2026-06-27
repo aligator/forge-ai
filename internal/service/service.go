@@ -348,21 +348,23 @@ func (s *Service) postSuccess(ctx context.Context, fc Forgejo, ticket forgejo.Ti
 }
 
 func prompt(ticket forgejo.Ticket, branch, base string, allowGit bool, toolHints string) string {
-	gitPolicy := `The repository is already checked out on the prepared branch above. Do not run git commands. Make file changes only; the outer forge-ai service will commit and push the prepared branch.`
+	gitPolicy := `Repo already on branch. No git cmds. Edit files only; forge-ai commits+pushes.`
 	if allowGit {
-		gitPolicy = `The repository is already checked out on the prepared branch above. Stay on that branch. You may use git status, git diff, git add, and git commit on the current branch only. Do not create, switch, reset, rebase, merge, or delete branches. Do not push; the outer forge-ai service will push the prepared branch and post back to Forgejo.`
+		gitPolicy = `Repo already on branch. Stay there. Allowed: git status, diff, add, commit. Forbidden: create/switch/reset/rebase/merge/delete branches, push. forge-ai pushes+posts.`
 	}
 	var toolSection string
 	if strings.TrimSpace(toolHints) != "" {
-		toolSection = "Available tools:\n" + strings.TrimSpace(toolHints) + "\n\n"
+		toolSection = "Tools:\n" + strings.TrimSpace(toolHints) + "\n\n"
 	}
-	return fmt.Sprintf(`You are working in a cloned Forgejo repository.
+	return fmt.Sprintf(`Work in cloned Forgejo repo.
 
-Repository: %s/%s
+Repo: %s/%s
 Ticket: %s #%d
 Branch: %s
-Base branch: %s
-Ticket URL: %s
+Base: %s
+URL: %s
+
+Forgejo API: use FORGEJO_URL env. No localhost unless FORGEJO_URL says localhost.
 
 Title:
 %s
@@ -373,12 +375,12 @@ Body:
 Trigger comment:
 %s
 
-Treat the trigger comment as the primary instruction. Use the issue or pull request body only as background context.
+Trigger comment = main task. Body = context. Before plan: read issue/PR comments via Forgejo MCP. API fallback only if MCP fails. Apply relevant later comments.
 %s
 
-%sBefore making any changes, first read .forge-ai/instructions.md if it exists, then explore the repository to understand its structure and existing code. If an AGENTS.md or CLAUDE.md exists, read and follow its instructions too. Then implement the requested change. If you cannot complete the requested change, explain the blocker in your final response. If all is good you may write a short summary as final response.
+%sFirst: read .forge-ai/instructions.md. Inspect relevant files only. Skip configs unless needed. Current repo only. No parent/sibling dirs. Read relevant AGENTS.md/CLAUDE.md. Never print secrets/full env. Prefix shell cmds with 'rtk'. Implement. Blocked? explain. Done? short summary.
 
-When done, write a short conventional-commits commit message to the file ".forge-ai-commit-msg" in the repository root. One line only. Do not commit or push.`,
+Done: write one-line conventional commit msg to ".forge-ai-commit-msg". No commit. No push.`,
 		ticket.Owner, ticket.Repo, ticket.Kind, ticket.Number, branch, base, ticket.HTMLURL, ticket.Title, ticket.Body, strings.TrimSpace(ticket.Instruction), gitPolicy, toolSection)
 }
 

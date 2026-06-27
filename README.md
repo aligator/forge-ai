@@ -1,10 +1,10 @@
 # Forge AI
 
-`forge-ai` listens for Forgejo webhooks, starts an AI coding agent for labelled issues or pull requests, pushes the resulting branch, comments back on the ticket, and creates a pull request for issue-triggered work.
+`forge-ai` listens for Forgejo webhooks, starts an AI coding agent when a configured mention appears on an issue or pull request, pushes the resulting branch, comments back on the ticket, and creates a pull request for issue-triggered work.
 
 ## Flow
 
-1. Add the trigger label, default `ai`, to an issue or pull request.
+1. Mention a configured agent, for example `@forge-ai`, `@codex`, `@claude`, or `@opencode`, on an issue or pull request.
 2. Forgejo sends the `issues` or `pull_request` webhook to `POST /webhook`.
 3. The service clones or reuses the repository workspace.
 4. It checks out the pull request head branch, an existing issue branch, or a new issue branch from the base branch.

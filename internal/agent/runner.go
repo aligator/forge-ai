@@ -59,11 +59,19 @@ func (r *Runner) Run(ctx context.Context, workdir, prompt string) (Result, error
 	} else {
 		r.logger.Info("agent finished")
 	}
-	return Result{Output: tail(output.String(), 12000)}, err
+	return Result{Output: tail(redact(output.String(), cmd.Env), 12000)}, err
 }
 
 func commandLine(cmd *exec.Cmd) string {
-	return fmt.Sprintf("%s %s", cmd.Path, strings.Join(cmd.Args[1:], " "))
+	args := make([]string, 0, len(cmd.Args)-1)
+	for i, arg := range cmd.Args[1:] {
+		if len(arg) > 300 || strings.Contains(arg, "\n") {
+			args = append(args, fmt.Sprintf("<arg%d:%d bytes>", i+1, len(arg)))
+			continue
+		}
+		args = append(args, arg)
+	}
+	return fmt.Sprintf("%s %s", cmd.Path, strings.Join(args, " "))
 }
 
 func tail(value string, limit int) string {
@@ -72,4 +80,20 @@ func tail(value string, limit int) string {
 		return value
 	}
 	return value[len(value)-limit:]
+}
+
+func redact(value string, env []string) string {
+	for _, item := range env {
+		key, secret, ok := strings.Cut(item, "=")
+		if !ok || secret == "" || !sensitiveEnvKey(key) || len(secret) < 8 {
+			continue
+		}
+		value = strings.ReplaceAll(value, secret, "<redacted>")
+	}
+	return value
+}
+
+func sensitiveEnvKey(key string) bool {
+	key = strings.ToUpper(key)
+	return strings.Contains(key, "TOKEN") || strings.Contains(key, "PASSWORD") || strings.Contains(key, "SECRET") || strings.Contains(key, "KEY")
 }

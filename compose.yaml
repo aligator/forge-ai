@@ -25,7 +25,6 @@ services:
       FORGEJO_DEV_EMAIL: ${FORGEJO_DEV_EMAIL:-forge-user@example.invalid}
       FORGEJO_AGENT_USERS: ${FORGEJO_AGENT_USERS:-claude,codex,opencode}
       FORGEJO_AGENT_PASSWORD: ${FORGEJO_AGENT_PASSWORD:-agent-password}
-      TRIGGER_LABEL: ${TRIGGER_LABEL:-ai}
       WEBHOOK_TARGET_URL: ${WEBHOOK_TARGET_URL:-http://forge-ai:8080/webhook}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
     healthcheck:

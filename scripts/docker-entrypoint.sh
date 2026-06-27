@@ -19,4 +19,20 @@ if [ "$AGENT_UID" != "$CURRENT_UID" ] || [ "$AGENT_GID" != "$CURRENT_GID" ]; the
     chown -R agent:agent /var/lib/forge-ai /home/agent
 fi
 
+export PATH="/usr/local/bin:/home/agent/.nix-profile/bin:/home/agent/.local/bin:$PATH"
+if [ -x /home/agent/.nix-profile/bin/nix ]; then
+cat >/usr/local/bin/nix <<'EOF'
+#!/bin/sh
+if [ "$1" = "develop" ] && [ "${NIX_WRITE_LOCK:-}" != "1" ]; then
+    shift
+    set -- develop --no-write-lock-file "$@"
+fi
+if [ "${NIX_VERBOSE:-}" = "1" ]; then
+    exec /home/agent/.nix-profile/bin/nix "$@"
+fi
+exec /home/agent/.nix-profile/bin/nix --quiet "$@"
+EOF
+    chmod +x /usr/local/bin/nix
+fi
+
 exec gosu agent "$@"
