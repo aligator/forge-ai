@@ -376,7 +376,7 @@ Trigger comment:
 Treat the trigger comment as the primary instruction. Use the issue or pull request body only as background context.
 %s
 
-%sBefore making any changes, explore the repository to understand its structure and existing code. If an AGENTS.md or CLAUDE.md read and follow its instructions. Then implement the requested change. If you cannot complete the requested change, explain the blocker in your final response. If all is good you may write a short sumary as final response.
+%sBefore making any changes, first read .forge-ai/instructions.md if it exists, then explore the repository to understand its structure and existing code. If an AGENTS.md or CLAUDE.md exists, read and follow its instructions too. Then implement the requested change. If you cannot complete the requested change, explain the blocker in your final response. If all is good you may write a short summary as final response.
 
 When done, write a short conventional-commits commit message to the file ".forge-ai-commit-msg" in the repository root. One line only. Do not commit or push.`,
 		ticket.Owner, ticket.Repo, ticket.Kind, ticket.Number, branch, base, ticket.HTMLURL, ticket.Title, ticket.Body, strings.TrimSpace(ticket.Instruction), gitPolicy, toolSection)

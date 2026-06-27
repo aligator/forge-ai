@@ -11,6 +11,12 @@ FROM scratch AS prebuilt
 ARG TARGETARCH
 COPY linux/${TARGETARCH}/forge-ai /forge-ai
 
+FROM golang:1.26-bookworm AS forgejo-mcp-builder
+ARG FORGEJO_MCP_VERSION=v2.30.0
+WORKDIR /src
+RUN git clone --depth 1 --branch "${FORGEJO_MCP_VERSION}" https://codeberg.org/goern/forgejo-mcp.git . \
+    && go install .
+
 FROM ${BINARY_PROVIDER} AS binary-provider
 
 FROM node:24-bookworm
@@ -25,6 +31,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=binary-provider /forge-ai /usr/local/bin/forge-ai
+COPY --from=forgejo-mcp-builder /go/bin/forgejo-mcp /usr/local/bin/forgejo-mcp
 COPY scripts/forge-ai-mock-agent /usr/local/bin/forge-ai-mock-agent
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/forge-ai-mock-agent /usr/local/bin/docker-entrypoint.sh
@@ -46,7 +53,7 @@ RUN set -e; \
 USER agent
 ENV PATH="/home/agent/.nix-profile/bin:/home/agent/.local/bin:$PATH"
 RUN mkdir -p /home/agent/.config/nix \
-    && echo "filter-syscalls = false" > /home/agent/.config/nix/nix.conf \
+    && printf "filter-syscalls = false\nexperimental-features = nix-command flakes\n" > /home/agent/.config/nix/nix.conf \
     && curl -sSL https://nixos.org/nix/install | sh -s -- --no-daemon \
     && . /home/agent/.nix-profile/etc/profile.d/nix.sh \
     && nix-channel --update
@@ -61,7 +68,7 @@ USER root
 WORKDIR /var/lib/forge-ai
 EXPOSE 8080
 
-ENV AGENT_TOOL_HINTS="- Nix is installed (single-user). Use it to install any CLI tools you need without root: nix-env -iA nixpkgs.ripgrep (prebuilt binaries, fast). Run . ~/.nix-profile/etc/profile.d/nix.sh first if nix commands are not found.\n- Playwright MCP is available for browser automation and web scraping (headless Chromium)."
+ENV AGENT_TOOL_HINTS="- Nix is installed (single-user). Use it to install any CLI tools you need without root: nix-env -iA nixpkgs.ripgrep (prebuilt binaries, fast). Run . ~/.nix-profile/etc/profile.d/nix.sh first if nix commands are not found.\n- Playwright MCP is available for browser automation and web scraping (headless Chromium).\n- Forgejo MCP is available (MCP server name: forgejo). Use it to read issue comments, list PRs, fetch file contents, search code, and more. The credentials and server URL are pre-configured via environment variables."
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["/usr/local/bin/forge-ai"]

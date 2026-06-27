@@ -2,7 +2,11 @@
   "mcpServers": {
     "playwright": {
       "command": "npx",
-      "args": ["@playwright/mcp", "--headless"]
+      "args": ["@playwright/mcp", "--headless", "--browser", "chromium"]
+    },
+    "forgejo": {
+      "command": "forgejo-mcp",
+      "args": ["--transport", "stdio"]
     }
   }
 }

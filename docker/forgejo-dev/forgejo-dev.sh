@@ -92,6 +92,29 @@ token="$(
 auth_header="Authorization: Bearer ${token}"
 api="${FORGEJO_INTERNAL_URL}/api/v1"
 
+seed_file_if_missing() {
+	file_path="$1"
+	commit_message="$2"
+	file_content="$3"
+	file_status="$(curl -fsS -o /dev/null -w '%{http_code}' -H "$auth_header" \
+		"${api}/repos/${FORGEJO_BOOTSTRAP_USER}/${FORGEJO_BOOTSTRAP_REPO}/contents/${file_path}" || true)"
+	if [ "$file_status" != "200" ]; then
+		content="$(printf '%s' "$file_content" | base64 | tr -d '\n')"
+		curl -fsS -X POST -H "$auth_header" -H "Content-Type: application/json" \
+			-d "$(jq -n --arg message "$commit_message" --arg content "$content" '{message:$message, content:$content, branch:"main"}')" \
+			"${api}/repos/${FORGEJO_BOOTSTRAP_USER}/${FORGEJO_BOOTSTRAP_REPO}/contents/${file_path}" >/dev/null
+	fi
+}
+
+add_repo_collaborator() {
+	collaborator="$1"
+	[ -z "$collaborator" ] && return 0
+	[ "$collaborator" = "$FORGEJO_BOOTSTRAP_USER" ] && return 0
+	curl -fsS -X PUT -H "$auth_header" -H "Content-Type: application/json" \
+		-d "$(jq -n '{permission:"write"}')" \
+		"${api}/repos/${FORGEJO_BOOTSTRAP_USER}/${FORGEJO_BOOTSTRAP_REPO}/collaborators/${collaborator}" >/dev/null
+}
+
 status="$(curl -fsS -o /dev/null -w '%{http_code}' -H "$auth_header" \
 	"${api}/repos/${FORGEJO_BOOTSTRAP_USER}/${FORGEJO_BOOTSTRAP_REPO}" || true)"
 if [ "$status" != "200" ]; then
@@ -100,14 +123,79 @@ if [ "$status" != "200" ]; then
 		"${api}/user/repos" >/dev/null
 fi
 
-readme_status="$(curl -fsS -o /dev/null -w '%{http_code}' -H "$auth_header" \
-	"${api}/repos/${FORGEJO_BOOTSTRAP_USER}/${FORGEJO_BOOTSTRAP_REPO}/contents/README.md" || true)"
-if [ "$readme_status" != "200" ]; then
-	content="$(printf '# forge-ai demo\n\nThis repository is seeded by docker compose for local testing.\n' | base64 | tr -d '\n')"
-	curl -fsS -X POST -H "$auth_header" -H "Content-Type: application/json" \
-		-d "$(jq -n --arg content "$content" '{message:"seed demo README", content:$content, branch:"main"}')" \
-		"${api}/repos/${FORGEJO_BOOTSTRAP_USER}/${FORGEJO_BOOTSTRAP_REPO}/contents/README.md" >/dev/null
+add_repo_collaborator "$FORGEJO_DEV_USER"
+if [ -n "$FORGEJO_AGENT_USERS" ]; then
+	echo "$FORGEJO_AGENT_USERS" | tr ',' '\n' | while read -r agent_user; do
+		agent_user="$(echo "$agent_user" | tr -d '[:space:]')"
+		add_repo_collaborator "$agent_user"
+	done
 fi
+
+seed_file_if_missing "README.md" "seed demo README" "$(cat <<'EOF'
+# forge-ai demo
+
+This repository is seeded by docker compose for local testing.
+
+It includes a Go-oriented Nix flake and `.forge-ai/instructions.md` so agents have repo-specific guidance.
+EOF
+)"
+
+seed_file_if_missing "flake.nix" "seed demo Nix flake" "$(cat <<'EOF'
+{
+  description = "forge-ai demo Go development shell";
+
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+  outputs = { nixpkgs, ... }:
+    let
+      systems = [
+        "aarch64-darwin"
+        "aarch64-linux"
+        "x86_64-darwin"
+        "x86_64-linux"
+      ];
+      forAllSystems = nixpkgs.lib.genAttrs systems;
+    in
+    {
+      devShells = forAllSystems (system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+        in
+        {
+          default = pkgs.mkShell {
+            packages = with pkgs; [
+              go
+              gopls
+              gotools
+              gofumpt
+              golangci-lint
+            ];
+
+            shellHook = ''
+              echo "Go $(go version)"
+              echo "Run: go test ./..."
+            '';
+          };
+        });
+    };
+}
+EOF
+)"
+
+seed_file_if_missing ".forge-ai/instructions.md" "seed forge-ai instructions" "$(cat <<'EOF'
+# forge-ai instructions
+
+Read this file before changing code.
+
+- Use the Nix dev shell when Go tooling is needed: `nix develop`.
+- Keep changes small and focused on the ticket.
+- Follow existing Go style.
+- Format changed Go files with `gofmt` or `gofumpt`.
+- Run `go test ./...` before finishing when practical.
+- Do not commit, push, rebase, reset, or switch branches unless forge-ai explicitly allows git for this run.
+- Write the final commit message to `.forge-ai-commit-msg`.
+EOF
+)"
 
 curl -fsS -X POST -H "$auth_header" -H "Content-Type: application/json" \
 	-d "$(jq -n --arg name "$TRIGGER_LABEL" '{name:$name, color:"#0e8a16", description:"Run forge-ai"}')" \

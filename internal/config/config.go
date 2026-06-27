@@ -44,6 +44,7 @@ type AgentConfig struct {
 	Args            []string
 	CommandTemplate string
 	Timeout         time.Duration
+	ExtraEnv        []string // extra env vars injected into the agent subprocess (e.g. FORGEJO_ACCESS_TOKEN)
 }
 
 type GitConfig struct {

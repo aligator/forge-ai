@@ -1,3 +1,7 @@
 [mcp_servers.playwright]
 command = "npx"
-args = ["@playwright/mcp", "--headless"]
+args = ["@playwright/mcp", "--headless", "--browser", "chromium"]
+
+[mcp_servers.forgejo]
+command = "forgejo-mcp"
+args = ["--transport", "stdio"]

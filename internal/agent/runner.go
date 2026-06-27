@@ -33,13 +33,17 @@ func (r *Runner) Run(ctx context.Context, workdir, prompt string) (Result, error
 	var cmd *exec.Cmd
 	if r.cfg.CommandTemplate != "" {
 		cmd = exec.CommandContext(ctx, "sh", "-c", r.cfg.CommandTemplate)
-		cmd.Env = append(cmd.Environ(), "FORGE_AI_PROMPT="+prompt)
+		cmd.Env = append(os.Environ(), append(r.cfg.ExtraEnv, "FORGE_AI_PROMPT="+prompt)...)
 	} else {
 		args := append([]string{}, r.cfg.Args...)
 		args = append(args, prompt)
 		cmd = exec.CommandContext(ctx, r.cfg.Bin, args...)
+		if len(r.cfg.ExtraEnv) > 0 {
+			cmd.Env = append(os.Environ(), r.cfg.ExtraEnv...)
+		}
 	}
 	cmd.Dir = workdir
+	cmd.Stdin = nil // explicitly closed; subprocesses that read stdin get immediate EOF
 
 	var output bytes.Buffer
 	cmd.Stdout = io.MultiWriter(&output, os.Stdout)

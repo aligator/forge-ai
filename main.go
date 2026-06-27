@@ -47,7 +47,6 @@ func main() {
 	for i := range cfg.Agents {
 		route := &cfg.Agents[i]
 		key := strings.ToLower(route.Mention)
-		agents[key] = agent.NewRunner(route.Agent, logger)
 
 		if route.Token == "" && route.User != "" && route.Password != "" {
 			tok, err := forgejo.GenerateAccessToken(context.Background(), cfg.ForgejoURL, route.User, route.Password, "forge-ai")
@@ -63,6 +62,11 @@ func main() {
 		if token == "" {
 			token = cfg.ForgejoToken
 		}
+		route.Agent.ExtraEnv = []string{
+			"FORGEJO_ACCESS_TOKEN=" + token,
+			"FORGEJO_URL=" + cfg.ForgejoURL,
+		}
+		agents[key] = agent.NewRunner(route.Agent, logger)
 		forgejoClients[key] = forgejo.NewClient(cfg.ForgejoURL, token)
 		logger.Info("registered agent", "mention", route.Mention, "user", route.User, "bin", route.Agent.Bin, "command", route.Agent.CommandTemplate)
 	}
