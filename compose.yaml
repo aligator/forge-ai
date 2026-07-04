@@ -67,20 +67,28 @@ services:
       BRANCH_PREFIX: ${BRANCH_PREFIX:-forge-ai}
       CREATE_PR: ${CREATE_PR:-true}
       MAX_CONCURRENT: ${MAX_CONCURRENT:-3}
+      GIT_USER_NAME: ${GIT_USER_NAME:-forge-ai}
+      GIT_USER_EMAIL: ${GIT_USER_EMAIL:-forge-ai@example.invalid}
       AGENT_ALLOW_GIT: ${AGENT_ALLOW_GIT:-false}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       AGENT_0_USER: ${AGENT_0_USER:-claude}
       AGENT_0_BIN: ${AGENT_0_BIN:-claude}
       AGENT_0_ARGS: ${AGENT_0_ARGS:---dangerously-skip-permissions --output-format stream-json -p}
       AGENT_0_TIMEOUT: ${AGENT_0_TIMEOUT:-30m}
+      AGENT_0_GIT_USER_NAME: ${AGENT_0_GIT_USER_NAME:-Claude Bot}
+      AGENT_0_GIT_USER_EMAIL: ${AGENT_0_GIT_USER_EMAIL:-claude@example.invalid}
       AGENT_1_USER: ${AGENT_1_USER:-codex}
       AGENT_1_BIN: ${AGENT_1_BIN:-codex}
       AGENT_1_ARGS: ${AGENT_1_ARGS:-exec --dangerously-bypass-approvals-and-sandbox}
       AGENT_1_TIMEOUT: ${AGENT_1_TIMEOUT:-30m}
+      AGENT_1_GIT_USER_NAME: ${AGENT_1_GIT_USER_NAME:-Codex Bot}
+      AGENT_1_GIT_USER_EMAIL: ${AGENT_1_GIT_USER_EMAIL:-codex@example.invalid}
       AGENT_2_USER: ${AGENT_2_USER:-opencode}
       AGENT_2_BIN: ${AGENT_2_BIN:-opencode}
       AGENT_2_ARGS: ${AGENT_2_ARGS:-run}
       AGENT_2_TIMEOUT: ${AGENT_2_TIMEOUT:-30m}
+      AGENT_2_GIT_USER_NAME: ${AGENT_2_GIT_USER_NAME:-opencode Bot}
+      AGENT_2_GIT_USER_EMAIL: ${AGENT_2_GIT_USER_EMAIL:-opencode@example.invalid}
     volumes:
       - forge-ai-workspaces:/var/lib/forge-ai/workspaces
       - ${CLAUDE_CREDENTIALS:-${HOME}/.claude/.credentials.json}:/home/agent/.claude/.credentials.json:ro

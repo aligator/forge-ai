@@ -107,6 +107,8 @@ AGENT_ALLOW_GIT=true \
 
 When `AGENT_ALLOW_GIT=true`, the prompt still tells the agent to stay on the prepared branch and only use git status, diff, add, and commit. It must not switch branches or push. The sandbox is just part of `AGENT_ARGS`; use `danger-full-access` if Codex should be able to write `.git`.
 
+Commit identity defaults to `GIT_USER_NAME` and `GIT_USER_EMAIL`. Override it per configured agent with `AGENT_0_GIT_USER_NAME` and `AGENT_0_GIT_USER_EMAIL` (or `AGENT_GIT_USER_NAME` and `AGENT_GIT_USER_EMAIL` for the legacy single-agent config). The selected identity is written to the worktree before the agent starts, so it applies both to forge-ai's automatic commit and to agent-created git commits.
+
 Use `AGENT_COMMAND` only for custom shell wrappers; the service exposes the prompt there as `FORGE_AI_PROMPT`.
 
 API keys are still possible, but they are not configured by default. For Claude specifically, do not set `ANTHROPIC_API_KEY` when you want subscription auth; Claude Code gives the API key precedence over subscription OAuth.
@@ -130,5 +132,10 @@ WORKSPACE_DIR=.forge-ai/workspaces
 BRANCH_PREFIX=forge-ai
 CREATE_PR=true
 MAX_CONCURRENT=1
+GIT_USER_NAME=forge-ai
+GIT_USER_EMAIL=forge-ai@example.invalid
 AGENT_TIMEOUT=30m
+AGENT_GIT_USER_NAME=<optional single-agent override>
+AGENT_GIT_USER_EMAIL=<optional single-agent override>
+# Numbered routes can use AGENT_0_GIT_USER_NAME and AGENT_0_GIT_USER_EMAIL.
 ```

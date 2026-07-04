@@ -25,7 +25,7 @@ type Forgejo interface {
 }
 
 type Git interface {
-	Prepare(context.Context, string, string, string, string, string, string, string) (string, error)
+	Prepare(context.Context, string, string, string, string, string, string, string, config.GitIdentity) (string, error)
 	CommitIfDirty(context.Context, string, string) (bool, error)
 	Push(context.Context, string, string) error
 }
@@ -150,6 +150,7 @@ func (s *Service) Handle(ctx context.Context, event string, payload forgejo.Webh
 
 	mention, ag := s.findAgent(ticket.Instruction)
 	fc := s.forgejoFor(mention)
+	route := s.routeForMention(mention)
 
 	if err := s.postStartAckWith(ctx, fc, ticket); err != nil {
 		s.logger.Warn("post start acknowledgement failed", "comment_id", ticket.CommentID, "error", err)
@@ -158,7 +159,7 @@ func (s *Service) Handle(ctx context.Context, event string, payload forgejo.Webh
 	s.semaphore <- struct{}{}
 	defer func() { <-s.semaphore }()
 
-	return s.run(ctx, fc, ticket, ag)
+	return s.run(ctx, fc, ticket, ag, route.Git)
 }
 
 func (s *Service) shouldRun(payload forgejo.WebhookPayload, ticket forgejo.Ticket) bool {
@@ -208,7 +209,16 @@ func (s *Service) findAgent(instruction string) (string, Agent) {
 	return "", nil
 }
 
-func (s *Service) run(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, ag Agent) error {
+func (s *Service) routeForMention(mention string) config.AgentRoute {
+	for _, route := range s.cfg.Agents {
+		if strings.EqualFold(route.Mention, mention) {
+			return route
+		}
+	}
+	return config.AgentRoute{Git: s.cfg.Git.GitIdentity}
+}
+
+func (s *Service) run(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, ag Agent, identity config.GitIdentity) error {
 	branch := branchForTicket(s.cfg, ticket)
 	base := firstNonEmpty(ticket.BaseBranch, ticket.DefaultBranch, "main")
 
@@ -219,7 +229,7 @@ func (s *Service) run(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, ag
 
 	token := s.routeToken(ticket, fc)
 	cloneURL := rewriteCloneURL(ticket.CloneURL, s.cfg.CloneURLBase)
-	workdir, err := s.git.Prepare(ctx, s.cfg.WorkspaceDir, cloneURL, token, ticket.Owner, ticket.Repo, branch, base)
+	workdir, err := s.git.Prepare(ctx, s.cfg.WorkspaceDir, cloneURL, token, ticket.Owner, ticket.Repo, branch, base, identity)
 	if err != nil {
 		_ = s.postFailure(ctx, fc, ticket, err)
 		return err
