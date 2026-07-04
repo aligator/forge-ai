@@ -388,7 +388,7 @@ Body:
 Trigger comment:
 %s
 
-Trigger comment = main task. Body = context. Before plan: read issue/PR comments via Forgejo MCP. API fallback only if MCP fails. Apply relevant later comments.
+Trigger comment = main task. Body = context. Before plan: read issue/PR comments via Forgejo MCP. API fallback only if MCP fails. Apply relevant later comments. Need to communicate with user? Post a Forgejo comment via Forgejo MCP. You may post short progress updates or questions whenever useful.
 %s
 
 %sFirst: read .forge-ai/instructions.md. Inspect relevant files only. Skip configs unless needed. Current repo only. No parent/sibling dirs. Read relevant AGENTS.md/CLAUDE.md. Never print secrets/full env. Prefix shell cmds with 'rtk'. Implement. Blocked? explain. Done? short summary.

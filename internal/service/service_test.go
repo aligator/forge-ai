@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"codeberg.org/forge-ai/internal/agent"
@@ -41,6 +42,26 @@ func TestRewriteCloneURL(t *testing.T) {
 	want := "http://forgejo:3000/ac/demo.git"
 	if got != want {
 		t.Fatalf("rewriteCloneURL() = %q, want %q", got, want)
+	}
+}
+
+func TestPromptTellsAgentToCommunicateViaForgejoMCP(t *testing.T) {
+	got := prompt(forgejo.Ticket{
+		Owner:       "ac",
+		Repo:        "demo",
+		Kind:        "issue",
+		Number:      1,
+		Instruction: "@forge-ai hello",
+	}, "forge-ai/ac/demo/issue-1", "main", false, "")
+
+	for _, want := range []string{
+		"read issue/PR comments via Forgejo MCP",
+		"Post a Forgejo comment via Forgejo MCP",
+		"short progress updates",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("prompt() missing %q in:\n%s", want, got)
+		}
 	}
 }
 
