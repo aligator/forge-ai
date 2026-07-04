@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 ARG BINARY_PROVIDER=build
 
 FROM golang:1.26-alpine AS build
@@ -77,7 +79,11 @@ COPY scripts/agent-config/claude.json      /home/agent/.claude.json
 COPY scripts/agent-config/claude-settings.json /home/agent/.claude/settings.json
 COPY scripts/agent-config/codex.toml       /home/agent/.codex/config.toml
 COPY scripts/agent-config/opencode.json    /home/agent/.config/opencode/config.json
-RUN "$(npm root -g)/@playwright/mcp/node_modules/.bin/playwright" install chromium
+RUN --mount=type=cache,target=/tmp/playwright-cache,uid=1000,gid=1000 \
+    PLAYWRIGHT_BROWSERS_PATH=/tmp/playwright-cache \
+    "$(npm root -g)/@playwright/mcp/node_modules/.bin/playwright" install chromium \
+    && mkdir -p /home/agent/.cache/ms-playwright \
+    && cp -a /tmp/playwright-cache/. /home/agent/.cache/ms-playwright/
 
 USER root
 WORKDIR /var/lib/forge-ai

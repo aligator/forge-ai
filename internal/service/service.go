@@ -31,7 +31,7 @@ type Git interface {
 }
 
 type Agent interface {
-	Run(context.Context, string, string) (agent.Result, error)
+	Run(context.Context, string, string, string) (agent.Result, error)
 }
 
 type Options struct {
@@ -227,11 +227,12 @@ func (s *Service) run(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, ag
 
 	s.logger.Info("workspace ready", "workdir", workdir, "branch", branch)
 	s.logWorkspaceFiles(workdir, "before agent run")
-	result, agentErr := ag.Run(ctx, workdir, prompt(ticket, branch, base, s.cfg.AgentAllowGit, s.cfg.AgentToolHints))
+	sessionID := sessionIDFromInstruction(ticket.Instruction, s.cfg.Agents)
+	result, agentErr := ag.Run(ctx, workdir, prompt(ticket, branch, base, s.cfg.AgentAllowGit, s.cfg.AgentToolHints), sessionID)
 	s.logWorkspaceFiles(workdir, "after agent run")
 	if agentErr != nil {
 		err := fmt.Errorf("agent failed: %w", agentErr)
-		_ = s.postFailureWithOutput(ctx, fc, ticket, err, result.Output)
+		_ = s.postFailureWithOutput(ctx, fc, ticket, err, result.Output, result.SessionID)
 		return err
 	}
 
@@ -241,12 +242,12 @@ func (s *Service) run(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, ag
 	}
 	committed, err := s.git.CommitIfDirty(ctx, workdir, commitMsg)
 	if err != nil {
-		_ = s.postFailureWithOutput(ctx, fc, ticket, err, result.Output)
+		_ = s.postFailureWithOutput(ctx, fc, ticket, err, result.Output, result.SessionID)
 		return err
 	}
 
 	if err := s.git.Push(ctx, workdir, branch); err != nil {
-		_ = s.postFailureWithOutput(ctx, fc, ticket, err, result.Output)
+		_ = s.postFailureWithOutput(ctx, fc, ticket, err, result.Output, result.SessionID)
 		return err
 	}
 	defer s.removeWorkspace(workdir)
@@ -255,7 +256,7 @@ func (s *Service) run(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, ag
 	if s.cfg.CreatePR && ticket.Kind == "issue" {
 		pull, err := s.ensurePullRequest(ctx, fc, ticket, branch, base)
 		if err != nil {
-			_ = s.postFailureWithOutput(ctx, fc, ticket, err, result.Output)
+			_ = s.postFailureWithOutput(ctx, fc, ticket, err, result.Output, result.SessionID)
 			return err
 		}
 		if pull != nil {
@@ -263,7 +264,7 @@ func (s *Service) run(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, ag
 		}
 	}
 
-	comment := successComment(branch, committed, result.Output, prText)
+	comment := successComment(branch, committed, result.SessionID, prText)
 	if err := s.postSuccess(ctx, fc, ticket, comment); err != nil {
 		return err
 	}
@@ -319,11 +320,14 @@ func (s *Service) ensurePullRequest(ctx context.Context, fc Forgejo, ticket forg
 }
 
 func (s *Service) postFailure(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, err error) error {
-	return s.postFailureWithOutput(ctx, fc, ticket, err, "")
+	return s.postFailureWithOutput(ctx, fc, ticket, err, "", "")
 }
 
-func (s *Service) postFailureWithOutput(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, err error, output string) error {
+func (s *Service) postFailureWithOutput(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, err error, output, sessionID string) error {
 	body := "forge-ai failed: `" + sanitizeInline(err.Error()) + "`"
+	if strings.TrimSpace(sessionID) != "" {
+		body += "\n\nAgent session: `" + sanitizeInline(sessionID) + "`"
+	}
 	if strings.TrimSpace(output) != "" {
 		body += "\n\nLast agent output:\n\n```text\n" + fence(output) + "\n```"
 	}
@@ -352,6 +356,9 @@ func (s *Service) postStart(ctx context.Context, fc Forgejo, ticket forgejo.Tick
 
 func (s *Service) postSuccess(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, body string) error {
 	if ticket.CommentID != 0 {
+		if strings.Contains(body, "Agent session:") {
+			return fc.CreateIssueComment(ctx, ticket.Owner, ticket.Repo, ticket.Number, body)
+		}
 		if err := fc.CreateCommentReaction(ctx, ticket.Owner, ticket.Repo, ticket.CommentID, "+1"); err == nil {
 			return nil
 		}
@@ -397,17 +404,54 @@ Done: write one-line conventional commit msg to ".forge-ai-commit-msg". No commi
 		ticket.Owner, ticket.Repo, ticket.Kind, ticket.Number, branch, base, ticket.HTMLURL, ticket.Title, ticket.Body, strings.TrimSpace(ticket.Instruction), gitPolicy, toolSection)
 }
 
-func successComment(branch string, committed bool, output, prText string) string {
+func successComment(branch string, committed bool, sessionID, prText string) string {
 	status := "forge-ai completed work on `" + branch + "`."
 	if committed {
 		status += "\n\nCommitted remaining changes."
 	} else {
 		status += "\n\nNo uncommitted changes remained after the agent finished."
 	}
-	if strings.TrimSpace(output) != "" {
-		status += "\n\nLast agent output:\n\n```text\n" + fence(output) + "\n```"
+	if strings.TrimSpace(sessionID) != "" {
+		status += "\n\nAgent session: `" + sanitizeInline(sessionID) + "`"
 	}
 	return status + prText
+}
+
+func sessionIDFromInstruction(instruction string, routes []config.AgentRoute) string {
+	lower := strings.ToLower(instruction)
+	for _, route := range routes {
+		mention := strings.ToLower(route.Mention)
+		idx := strings.Index(lower, mention)
+		if idx < 0 {
+			continue
+		}
+		rest := strings.TrimSpace(instruction[idx+len(route.Mention):])
+		if rest == "" {
+			return ""
+		}
+		token := strings.Fields(rest)[0]
+		if validSessionIDToken(token) {
+			return token
+		}
+	}
+	return ""
+}
+
+func validSessionIDToken(token string) bool {
+	token = strings.Trim(token, "`'\"")
+	if len(token) < 6 {
+		return false
+	}
+	for _, r := range token {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' || r == ':' {
+			continue
+		}
+		return false
+	}
+	if strings.ContainsAny(token, "-_:") {
+		return true
+	}
+	return len(token) >= 16
 }
 
 func sanitizeInline(value string) string {

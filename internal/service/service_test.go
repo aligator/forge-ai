@@ -139,6 +139,36 @@ func TestFindAgentPicksCorrectRunner(t *testing.T) {
 	}
 }
 
+func TestSessionIDFromInstructionUsesTokenAfterMention(t *testing.T) {
+	routes := []config.AgentRoute{{Mention: "@claude"}}
+	got := sessionIDFromInstruction("@claude session-123 continue work", routes)
+	if got != "session-123" {
+		t.Fatalf("sessionIDFromInstruction() = %q, want session-123", got)
+	}
+}
+
+func TestSessionIDFromInstructionIgnoresNormalTaskText(t *testing.T) {
+	routes := []config.AgentRoute{{Mention: "@claude"}}
+	got := sessionIDFromInstruction("@claude fix bug", routes)
+	if got != "" {
+		t.Fatalf("sessionIDFromInstruction() = %q, want empty", got)
+	}
+}
+
+func TestSuccessCommentIncludesSessionID(t *testing.T) {
+	got := successComment("work", true, "session-123", "")
+	if !strings.Contains(got, "Agent session: `session-123`") {
+		t.Fatalf("successComment() missing session id:\n%s", got)
+	}
+}
+
+func TestSuccessCommentOmitsAgentOutput(t *testing.T) {
+	got := successComment("work", true, "session-123", "")
+	if strings.Contains(got, "Last agent output:") {
+		t.Fatalf("successComment() includes agent output:\n%s", got)
+	}
+}
+
 func TestPostStartAckReactsToComment(t *testing.T) {
 	forge := &recordingForgejo{}
 	svc := New(Options{
@@ -232,11 +262,36 @@ func TestPostSuccessPostsCommentWhenReactionFails(t *testing.T) {
 	}
 }
 
+func TestPostSuccessPostsCommentWithSessionID(t *testing.T) {
+	forge := &recordingForgejo{}
+	svc := New(Options{
+		Config:  config.Config{MaxConcurrent: 1},
+		Forgejo: forge,
+	})
+
+	err := svc.postSuccess(context.Background(), forge, forgejo.Ticket{
+		Owner:       "ac",
+		Repo:        "demo",
+		Number:      1,
+		CommentID:   42,
+		Instruction: "@codex hello",
+	}, "done\n\nAgent session: `019f2cd5-9288-73b1-bf76-8ac3f2e8ce7a`")
+	if err != nil {
+		t.Fatalf("postSuccess() error = %v", err)
+	}
+	if !strings.Contains(forge.commentBody, "019f2cd5-9288-73b1-bf76-8ac3f2e8ce7a") {
+		t.Fatalf("commentBody = %q, want session id", forge.commentBody)
+	}
+	if forge.reactionContent != "" {
+		t.Fatalf("reactionContent = %q, want no reaction", forge.reactionContent)
+	}
+}
+
 type stubAgent struct {
 	name string
 }
 
-func (a *stubAgent) Run(_ context.Context, _, _ string) (agent.Result, error) {
+func (a *stubAgent) Run(_ context.Context, _, _, _ string) (agent.Result, error) {
 	return agent.Result{}, nil
 }
 

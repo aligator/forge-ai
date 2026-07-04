@@ -40,6 +40,7 @@ type Config struct {
 }
 
 type AgentConfig struct {
+	Type            string
 	Bin             string
 	Args            []string
 	CommandTemplate string
@@ -116,6 +117,7 @@ func loadAgentRoutes() []AgentRoute {
 			Password: os.Getenv(prefix + "PASSWORD"),
 			Token:    token,
 			Agent: AgentConfig{
+				Type:            os.Getenv(prefix + "TYPE"),
 				Bin:             os.Getenv(prefix + "BIN"),
 				Args:            fields(os.Getenv(prefix + "ARGS")),
 				CommandTemplate: os.Getenv(prefix + "COMMAND"),
@@ -130,6 +132,7 @@ func loadAgentRoutes() []AgentRoute {
 	return []AgentRoute{{
 		Mention: env("TRIGGER_MENTION", "@forge-ai"),
 		Agent: AgentConfig{
+			Type:            os.Getenv("AGENT_TYPE"),
 			Bin:             os.Getenv("AGENT_BIN"),
 			Args:            fields(os.Getenv("AGENT_ARGS")),
 			CommandTemplate: os.Getenv("AGENT_COMMAND"),
