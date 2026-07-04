@@ -3,12 +3,16 @@ package service
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"codeberg.org/forge-ai/internal/agent"
 	"codeberg.org/forge-ai/internal/config"
 	"codeberg.org/forge-ai/internal/forgejo"
+	"codeberg.org/forge-ai/internal/runstore"
 )
 
 func TestBranchForPullRequestUsesHeadBranch(t *testing.T) {
@@ -287,12 +291,90 @@ func TestPostSuccessPostsCommentWithSessionID(t *testing.T) {
 	}
 }
 
+func TestHandleRecordsRunStatusEventsLogsAndLinks(t *testing.T) {
+	store := &recordingRunStore{}
+	workdir := t.TempDir()
+	forge := &recordingForgejo{
+		pull: &forgejo.PullRequest{Index: 9, HTMLURL: "https://forgejo.example/ac/demo/pulls/9"},
+	}
+	svc := New(Options{
+		Config: config.Config{
+			Agents: []config.AgentRoute{
+				{User: "codex", Mention: "@codex", Agent: config.AgentConfig{Type: "codex"}},
+			},
+			WorkspaceDir:          t.TempDir(),
+			BranchPrefix:          "forge-ai",
+			CreatePR:              true,
+			MaxConcurrent:         1,
+			ForgejoBootstrapUser:  "forge-ai",
+			ForgejoToken:          "token",
+			ForgejoBootstrapToken: "forge-ai-local",
+		},
+		Forgejo:  forge,
+		Git:      &recordingGit{workdir: workdir},
+		Agents:   map[string]Agent{"@codex": &stubAgent{result: agent.Result{Output: "one chunk\nwith multiple lines", SessionID: "session-123"}}},
+		RunStore: store,
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+
+	err := svc.Handle(context.Background(), "issue_comment", forgejo.WebhookPayload{
+		Action: "created",
+		Repository: forgejo.Repository{
+			Name:          "demo",
+			CloneURL:      "https://forgejo.example/ac/demo.git",
+			DefaultBranch: "main",
+			Owner:         forgejo.User{Login: "ac"},
+		},
+		Issue: &forgejo.Issue{
+			Index:   3,
+			Title:   "Add store",
+			HTMLURL: "https://forgejo.example/ac/demo/issues/3",
+		},
+		Comment: &forgejo.Comment{ID: 42, Body: "@codex implement"},
+		Sender:  &forgejo.User{Login: "alice"},
+	})
+	if err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+
+	if len(store.runs) != 1 {
+		t.Fatalf("runs = %d, want 1", len(store.runs))
+	}
+	run := store.runs[0]
+	if run.Kind != runstore.RunKindWebhookRun || run.Status != runstore.StatusSuccess {
+		t.Fatalf("run status = %s/%s, want webhook_run/success", run.Kind, run.Status)
+	}
+	if run.Owner != "ac" || run.Repo != "demo" || run.TicketKind != "issue" || run.TicketNumber != 3 {
+		t.Fatalf("run ticket fields = %+v", run)
+	}
+	if run.Branch != "forge-ai/ac/demo/issue-3" || run.BaseBranch != "main" || run.AgentMention != "@codex" || run.AgentType != "codex" {
+		t.Fatalf("run workflow fields = %+v", run)
+	}
+	if run.SessionID != "session-123" {
+		t.Fatalf("session id = %q, want session-123", run.SessionID)
+	}
+	if store.statuses[0] != runstore.StatusRunning || store.statuses[len(store.statuses)-1] != runstore.StatusSuccess {
+		t.Fatalf("statuses = %+v, want running then success", store.statuses)
+	}
+	if len(store.logs) != 1 || store.logs[0].Chunk != "one chunk\nwith multiple lines" {
+		t.Fatalf("logs = %+v", store.logs)
+	}
+	if !store.hasEvent("queued") || !store.hasEvent("workspace_ready") || !store.hasEvent("agent_finished") || !store.hasEvent("success") {
+		t.Fatalf("events = %+v", store.events)
+	}
+	if !store.hasLink("ticket", "https://forgejo.example/ac/demo/issues/3") || !store.hasLink("pull_request", "https://forgejo.example/ac/demo/pulls/9") {
+		t.Fatalf("links = %+v", store.links)
+	}
+}
+
 type stubAgent struct {
-	name string
+	name   string
+	result agent.Result
+	err    error
 }
 
 func (a *stubAgent) Run(_ context.Context, _, _, _ string) (agent.Result, error) {
-	return agent.Result{}, nil
+	return a.result, a.err
 }
 
 type recordingForgejo struct {
@@ -301,6 +383,7 @@ type recordingForgejo struct {
 	reactionContent   string
 	reactionErr       error
 	reviewComments    []string
+	pull              *forgejo.PullRequest
 }
 
 func (f *recordingForgejo) GetLatestPullReviewComments(_ context.Context, _, _ string, _ int) ([]forgejo.Comment, error) {
@@ -327,5 +410,103 @@ func (f *recordingForgejo) FindOpenPullRequest(context.Context, string, string, 
 }
 
 func (f *recordingForgejo) CreatePullRequest(context.Context, string, string, forgejo.CreatePullRequestRequest) (*forgejo.PullRequest, error) {
-	return nil, nil
+	return f.pull, nil
+}
+
+type recordingGit struct {
+	workdir string
+}
+
+func (g *recordingGit) Prepare(context.Context, string, string, string, string, string, string, string) (string, error) {
+	return g.workdir, nil
+}
+
+func (g *recordingGit) CommitIfDirty(context.Context, string, string) (bool, error) {
+	return true, nil
+}
+
+func (g *recordingGit) Push(context.Context, string, string) error {
+	return nil
+}
+
+type recordingRunStore struct {
+	runs     []runstore.Run
+	statuses []runstore.Status
+	events   []runstore.EventInput
+	logs     []runstore.LogChunkInput
+	links    []runstore.LinkInput
+}
+
+func (s *recordingRunStore) CreateRun(_ context.Context, in runstore.CreateRunInput) (runstore.Run, error) {
+	run := runstore.Run{
+		ID:           "run-1",
+		Kind:         in.Kind,
+		Status:       in.Status,
+		Owner:        in.Owner,
+		Repo:         in.Repo,
+		TicketKind:   in.TicketKind,
+		TicketNumber: in.TicketNumber,
+		Branch:       in.Branch,
+		BaseBranch:   in.BaseBranch,
+		AgentMention: in.AgentMention,
+		AgentType:    in.AgentType,
+		StartedAt:    in.StartedAt,
+		CreatedBy:    in.CreatedBy,
+	}
+	s.runs = append(s.runs, run)
+	return run, nil
+}
+
+func (s *recordingRunStore) UpdateRunStatus(_ context.Context, id string, status runstore.Status, finishedAt time.Time, message string) error {
+	for i := range s.runs {
+		if s.runs[i].ID == id {
+			s.runs[i].Status = status
+			s.runs[i].FinishedAt = finishedAt
+			s.runs[i].Error = message
+		}
+	}
+	s.statuses = append(s.statuses, status)
+	return nil
+}
+
+func (s *recordingRunStore) SetSessionID(_ context.Context, id, sessionID string) error {
+	for i := range s.runs {
+		if s.runs[i].ID == id {
+			s.runs[i].SessionID = sessionID
+		}
+	}
+	return nil
+}
+
+func (s *recordingRunStore) AddEvent(_ context.Context, in runstore.EventInput) error {
+	s.events = append(s.events, in)
+	return nil
+}
+
+func (s *recordingRunStore) AddLogChunk(_ context.Context, in runstore.LogChunkInput) error {
+	s.logs = append(s.logs, in)
+	return nil
+}
+
+func (s *recordingRunStore) AddLink(_ context.Context, in runstore.LinkInput) error {
+	s.links = append(s.links, in)
+	return nil
+}
+
+func (s *recordingRunStore) hasEvent(eventType string) bool {
+	for _, event := range s.events {
+		if event.Type == eventType {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *recordingRunStore) hasLink(linkType, url string) bool {
+	for _, link := range s.links {
+		if link.Type == linkType && link.URL == url {
+			return true
+		}
+	}
+	return false
 }
