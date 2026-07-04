@@ -103,7 +103,7 @@ func Load() (Config, error) {
 }
 
 // loadAgentRoutes loads agent routes from numbered env vars (AGENT_0_USER, AGENT_0_BIN, ...).
-// The mention is derived as "@"+user. Falls back to legacy TRIGGER_MENTION + AGENT_BIN/AGENT_COMMAND if no numbered routes found.
+// The mention is derived as "@" + user.
 func loadAgentRoutes(defaultGit GitIdentity) []AgentRoute {
 	var routes []AgentRoute
 	for i := 0; ; i++ {
@@ -141,21 +141,7 @@ func loadAgentRoutes(defaultGit GitIdentity) []AgentRoute {
 	if len(routes) > 0 {
 		return routes
 	}
-	// Backward compat: single route from legacy vars
-	return []AgentRoute{{
-		Mention: env("TRIGGER_MENTION", "@forge-ai"),
-		Git: GitIdentity{
-			UserName:  env("AGENT_GIT_USER_NAME", defaultGit.UserName),
-			UserEmail: env("AGENT_GIT_USER_EMAIL", defaultGit.UserEmail),
-		},
-		Agent: AgentConfig{
-			Type:            os.Getenv("AGENT_TYPE"),
-			Bin:             os.Getenv("AGENT_BIN"),
-			Args:            fields(os.Getenv("AGENT_ARGS")),
-			CommandTemplate: os.Getenv("AGENT_COMMAND"),
-			Timeout:         envDuration("AGENT_TIMEOUT", 30*time.Minute),
-		},
-	}}
+	return nil
 }
 
 func (c Config) validate() error {
@@ -173,7 +159,7 @@ func (c Config) validate() error {
 		return errors.New("MAX_CONCURRENT must be positive")
 	}
 	if len(c.Agents) == 0 {
-		missing = append(missing, "AGENT_0_USER or TRIGGER_MENTION")
+		missing = append(missing, "AGENT_0_USER")
 	}
 	for i, route := range c.Agents {
 		if route.User == "" && route.Mention == "" {

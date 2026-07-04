@@ -43,25 +43,15 @@ func TestLoadAgentRoutesFallsBackToDefaultGitIdentity(t *testing.T) {
 	}
 }
 
-func TestLoadAgentRoutesUsesLegacySingleAgentGitIdentity(t *testing.T) {
+func TestLoadAgentRoutesReturnsNoRoutesWithoutNumberedAgents(t *testing.T) {
 	t.Setenv("AGENT_0_USER", "")
-	t.Setenv("TRIGGER_MENTION", "@forge-ai")
-	t.Setenv("AGENT_BIN", "codex")
-	t.Setenv("AGENT_GIT_USER_NAME", "Single Bot")
-	t.Setenv("AGENT_GIT_USER_EMAIL", "single@example.invalid")
 
 	routes := loadAgentRoutes(GitIdentity{
 		UserName:  "forge-ai",
 		UserEmail: "forge-ai@example.invalid",
 	})
 
-	if len(routes) != 1 {
-		t.Fatalf("len(routes) = %d, want 1", len(routes))
-	}
-	if got := routes[0].Git.UserName; got != "Single Bot" {
-		t.Fatalf("Git.UserName = %q, want Single Bot", got)
-	}
-	if got := routes[0].Git.UserEmail; got != "single@example.invalid" {
-		t.Fatalf("Git.UserEmail = %q, want single@example.invalid", got)
+	if len(routes) != 0 {
+		t.Fatalf("len(routes) = %d, want 0", len(routes))
 	}
 }
