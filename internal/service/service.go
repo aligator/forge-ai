@@ -671,7 +671,7 @@ func (s *Service) logWorkspaceFiles(workdir, label string) {
 
 func branchForTicket(cfg config.Config, ticket forgejo.Ticket) string {
 	if ticket.Kind == "pr" && ticket.HeadBranch != "" {
-		return ticket.HeadBranch
+		return gitops.BranchRefName(ticket.HeadBranch)
 	}
 	return gitops.BranchName(cfg.BranchPrefix, ticket.Owner, ticket.Repo, ticket.Kind, ticket.Number)
 }

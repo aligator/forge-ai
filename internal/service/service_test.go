@@ -28,6 +28,20 @@ func TestBranchForPullRequestUsesHeadBranch(t *testing.T) {
 	}
 }
 
+func TestBranchForPullRequestStripsHeadsRef(t *testing.T) {
+	got := branchForTicket(config.Config{BranchPrefix: "forge-ai"}, forgejo.Ticket{
+		Owner:      "ac",
+		Repo:       "demo",
+		Kind:       "pr",
+		Number:     8,
+		HeadBranch: "refs/heads/feature/dashboard",
+	})
+	want := "feature/dashboard"
+	if got != want {
+		t.Fatalf("branchForTicket() = %q, want %q", got, want)
+	}
+}
+
 func TestBranchForIssueUsesManagedBranch(t *testing.T) {
 	got := branchForTicket(config.Config{BranchPrefix: "forge-ai"}, forgejo.Ticket{
 		Owner:  "ac",
