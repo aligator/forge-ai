@@ -23,6 +23,7 @@ type Forgejo interface {
 	CreateCommentReaction(context.Context, string, string, int64, string) error
 	FindOpenPullRequest(context.Context, string, string, string) (*forgejo.PullRequest, error)
 	CreatePullRequest(context.Context, string, string, forgejo.CreatePullRequestRequest) (*forgejo.PullRequest, error)
+	UpdatePullRequest(context.Context, string, string, int, forgejo.UpdatePullRequestRequest) (*forgejo.PullRequest, error)
 }
 
 type Git interface {
@@ -339,6 +340,11 @@ func (s *Service) ensurePullRequest(ctx context.Context, fc Forgejo, ticket forg
 		return nil, err
 	}
 	if existing != nil {
+		if existing.Base.Ref != base {
+			return fc.UpdatePullRequest(ctx, ticket.Owner, ticket.Repo, existing.NumberValue(), forgejo.UpdatePullRequestRequest{
+				Base: base,
+			})
+		}
 		return existing, nil
 	}
 

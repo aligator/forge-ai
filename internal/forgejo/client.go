@@ -176,6 +176,19 @@ func (c *Client) CreatePullRequest(ctx context.Context, owner, repo string, requ
 	return &pull, nil
 }
 
+func (c *Client) UpdatePullRequest(ctx context.Context, owner, repo string, index int, request UpdatePullRequestRequest) (*PullRequest, error) {
+	body, err := c.do(ctx, http.MethodPatch, apiPath("repos", owner, repo, "pulls", fmt.Sprint(index)), nil, request)
+	if err != nil {
+		return nil, err
+	}
+
+	var pull PullRequest
+	if err := json.Unmarshal(body, &pull); err != nil {
+		return nil, err
+	}
+	return &pull, nil
+}
+
 func (c *Client) do(ctx context.Context, method, apiPath string, query url.Values, requestBody any) ([]byte, error) {
 	var body io.Reader
 	if requestBody != nil {

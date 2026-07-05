@@ -2,6 +2,7 @@ package forgejo
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -46,6 +47,34 @@ func TestFindOpenPullRequestReturnsNilWhenNoHeadMatch(t *testing.T) {
 	}
 	if pull != nil {
 		t.Fatalf("FindOpenPullRequest() = %#v, want nil", pull)
+	}
+}
+
+func TestUpdatePullRequestSendsBaseBranch(t *testing.T) {
+	client := NewClient("https://forgejo.example", "")
+	client.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodPatch {
+			t.Fatalf("method = %q, want PATCH", r.Method)
+		}
+		if r.URL.Path != "/api/v1/repos/ac/demo/pulls/7" {
+			t.Fatalf("path = %q, want pull endpoint", r.URL.Path)
+		}
+		var request UpdatePullRequestRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if request.Base != "release/1.2" {
+			t.Fatalf("base = %q, want release/1.2", request.Base)
+		}
+		return jsonResponse(`{"index":7,"base":{"ref":"release/1.2"}}`), nil
+	})}
+
+	pull, err := client.UpdatePullRequest(context.Background(), "ac", "demo", 7, UpdatePullRequestRequest{Base: "release/1.2"})
+	if err != nil {
+		t.Fatalf("UpdatePullRequest() error = %v", err)
+	}
+	if pull == nil || pull.Base.Ref != "release/1.2" {
+		t.Fatalf("UpdatePullRequest() = %#v, want release/1.2 base", pull)
 	}
 }
 
