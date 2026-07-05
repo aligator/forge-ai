@@ -368,6 +368,28 @@ func TestEnsurePullRequestUsesIssueBaseBranch(t *testing.T) {
 	}
 }
 
+func TestEnsurePullRequestStripsBaseBranchRef(t *testing.T) {
+	forge := &recordingForgejo{}
+	svc := New(Options{
+		Config:  config.Config{MaxConcurrent: 1},
+		Forgejo: forge,
+	})
+
+	_, err := svc.ensurePullRequest(context.Background(), forge, forgejo.Ticket{
+		Owner:  "ac",
+		Repo:   "demo",
+		Kind:   "issue",
+		Number: 8,
+		Title:  "Fix it",
+	}, "forge-ai/ac/demo/issue-8", "refs/heads/feature/dashboard")
+	if err != nil {
+		t.Fatalf("ensurePullRequest() error = %v", err)
+	}
+	if forge.createPullRequest.Base != "feature/dashboard" {
+		t.Fatalf("CreatePullRequest base = %q, want feature/dashboard", forge.createPullRequest.Base)
+	}
+}
+
 func TestEnsurePullRequestRetargetsExistingPullRequest(t *testing.T) {
 	forge := &recordingForgejo{
 		openPullRequest: &forgejo.PullRequest{
@@ -398,6 +420,34 @@ func TestEnsurePullRequestRetargetsExistingPullRequest(t *testing.T) {
 	}
 	if forge.createPullRequest.Head != "" {
 		t.Fatalf("CreatePullRequest called with head %q, want no create", forge.createPullRequest.Head)
+	}
+}
+
+func TestEnsurePullRequestReturnsExistingAfterCreateFailure(t *testing.T) {
+	forge := &recordingForgejo{
+		createPullRequestErr: errors.New("500 internal server error"),
+		openPullRequests: []*forgejo.PullRequest{
+			nil,
+			{Index: 9, HTMLURL: "https://forgejo.example/ac/demo/pulls/9"},
+		},
+	}
+	svc := New(Options{
+		Config:  config.Config{MaxConcurrent: 1},
+		Forgejo: forge,
+	})
+
+	pull, err := svc.ensurePullRequest(context.Background(), forge, forgejo.Ticket{
+		Owner:  "ac",
+		Repo:   "demo",
+		Kind:   "issue",
+		Number: 8,
+		Title:  "Fix it",
+	}, "forge-ai/ac/demo/issue-8", "main")
+	if err != nil {
+		t.Fatalf("ensurePullRequest() error = %v", err)
+	}
+	if pull == nil || pull.NumberValue() != 9 {
+		t.Fatalf("ensurePullRequest() = %#v, want PR #9", pull)
 	}
 }
 
@@ -494,7 +544,9 @@ type recordingForgejo struct {
 	reactionErr            error
 	reviewComments         []string
 	openPullRequest        *forgejo.PullRequest
+	openPullRequests       []*forgejo.PullRequest
 	createPullRequest      forgejo.CreatePullRequestRequest
+	createPullRequestErr   error
 	updatePullRequest      forgejo.UpdatePullRequestRequest
 	updatePullRequestIndex int
 }
@@ -519,11 +571,19 @@ func (f *recordingForgejo) CreateCommentReaction(_ context.Context, _ string, _ 
 }
 
 func (f *recordingForgejo) FindOpenPullRequest(context.Context, string, string, string) (*forgejo.PullRequest, error) {
+	if len(f.openPullRequests) > 0 {
+		pull := f.openPullRequests[0]
+		f.openPullRequests = f.openPullRequests[1:]
+		return pull, nil
+	}
 	return f.openPullRequest, nil
 }
 
 func (f *recordingForgejo) CreatePullRequest(_ context.Context, _ string, _ string, request forgejo.CreatePullRequestRequest) (*forgejo.PullRequest, error) {
 	f.createPullRequest = request
+	if f.createPullRequestErr != nil {
+		return nil, f.createPullRequestErr
+	}
 	return nil, nil
 }
 

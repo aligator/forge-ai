@@ -146,7 +146,7 @@ func (s *Service) Handle(ctx context.Context, event string, payload forgejo.Webh
 	fc := s.forgejoFor(mention)
 	route := s.routeForMention(mention)
 	branch := branchForTicket(s.cfg, ticket)
-	base := firstNonEmpty(ticket.BaseBranch, ticket.DefaultBranch, "main")
+	base := branchRef(firstNonEmpty(ticket.BaseBranch, ticket.DefaultBranch, "main"))
 	spec := appruntime.RunSpec{
 		TicketRef: ticket.Ref(),
 		Branch:    branch,
@@ -252,7 +252,7 @@ func (s *Service) routeForMention(mention string) config.AgentRoute {
 
 func (s *Service) run(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, ag Agent, run runstore.Run, identity config.GitIdentity) error {
 	branch := firstNonEmpty(run.Branch, branchForTicket(s.cfg, ticket))
-	base := firstNonEmpty(run.BaseBranch, ticket.BaseBranch, ticket.DefaultBranch, "main")
+	base := branchRef(firstNonEmpty(run.BaseBranch, ticket.BaseBranch, ticket.DefaultBranch, "main"))
 
 	s.logger.Info("starting ticket workflow", "ticket", ticket.Ref(), "repo", ticket.Owner+"/"+ticket.Repo, "branch", branch)
 	s.markRunRunning(ctx, run.ID)
@@ -473,6 +473,7 @@ func (s *Service) routeToken(ticket forgejo.Ticket, fc Forgejo) string {
 }
 
 func (s *Service) ensurePullRequest(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, branch, base string) (*forgejo.PullRequest, error) {
+	base = branchRef(base)
 	existing, err := fc.FindOpenPullRequest(ctx, ticket.Owner, ticket.Repo, branch)
 	if err != nil {
 		return nil, err
@@ -486,12 +487,21 @@ func (s *Service) ensurePullRequest(ctx context.Context, fc Forgejo, ticket forg
 		return existing, nil
 	}
 
-	return fc.CreatePullRequest(ctx, ticket.Owner, ticket.Repo, forgejo.CreatePullRequestRequest{
+	created, err := fc.CreatePullRequest(ctx, ticket.Owner, ticket.Repo, forgejo.CreatePullRequestRequest{
 		Base:  base,
 		Head:  branch,
 		Title: "forge-ai: " + ticket.Title,
 		Body:  fmt.Sprintf("Automated work for %s #%d.\n\n%s", ticket.Kind, ticket.Number, ticket.HTMLURL),
 	})
+	if err == nil {
+		return created, nil
+	}
+
+	existing, lookupErr := fc.FindOpenPullRequest(ctx, ticket.Owner, ticket.Repo, branch)
+	if lookupErr == nil && existing != nil {
+		return existing, nil
+	}
+	return nil, err
 }
 
 func (s *Service) postFailure(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, err error) error {
@@ -671,9 +681,13 @@ func (s *Service) logWorkspaceFiles(workdir, label string) {
 
 func branchForTicket(cfg config.Config, ticket forgejo.Ticket) string {
 	if ticket.Kind == "pr" && ticket.HeadBranch != "" {
-		return gitops.BranchRefName(ticket.HeadBranch)
+		return branchRef(ticket.HeadBranch)
 	}
 	return gitops.BranchName(cfg.BranchPrefix, ticket.Owner, ticket.Repo, ticket.Kind, ticket.Number)
+}
+
+func branchRef(value string) string {
+	return gitops.BranchRefName(value)
 }
 
 func rewriteCloneURL(rawCloneURL, rawBase string) string {

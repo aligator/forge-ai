@@ -50,6 +50,23 @@ func TestFindOpenPullRequestReturnsNilWhenNoHeadMatch(t *testing.T) {
 	}
 }
 
+func TestFindOpenPullRequestMatchesHeadWhenOwnerMissing(t *testing.T) {
+	client := NewClient("https://forgejo.example", "")
+	client.httpClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(`[
+			{"index":3,"head":{"ref":"forge-ai/ac/demo/issue-3","repo":{}}}
+		]`), nil
+	})}
+
+	pull, err := client.FindOpenPullRequest(context.Background(), "ac", "demo", "forge-ai/ac/demo/issue-3")
+	if err != nil {
+		t.Fatalf("FindOpenPullRequest() error = %v", err)
+	}
+	if pull == nil || pull.NumberValue() != 3 {
+		t.Fatalf("FindOpenPullRequest() = %#v, want PR #3", pull)
+	}
+}
+
 func TestUpdatePullRequestSendsBaseBranch(t *testing.T) {
 	client := NewClient("https://forgejo.example", "")
 	client.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
