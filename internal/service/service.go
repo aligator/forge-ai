@@ -426,10 +426,10 @@ Body:
 Trigger comment:
 %s
 
-Trigger comment = main task. Body = context. Before plan: read issue/PR comments via Forgejo MCP. API fallback only if MCP fails. Apply relevant later comments. Need to communicate with user? Post a Forgejo comment via Forgejo MCP. You may post short progress updates or questions whenever useful.
+Trigger comment = main task. Body = context. If the user asks clear questions or asks for analysis/advice, answer only; do not implement unless the user asks for code changes. Before plan: read issue/PR comments via Forgejo MCP. API fallback only if MCP fails. Apply relevant later comments. Need to communicate with user? Post a Forgejo comment via Forgejo MCP. You may post short progress updates or questions whenever useful.
 %s
 
-%sFirst: read .forge-ai/instructions.md. Inspect relevant files only. Skip configs unless needed. Current repo only. No parent/sibling dirs. Read relevant AGENTS.md/CLAUDE.md. Never print secrets/full env. Prefix shell cmds with 'rtk'. Implement. Blocked? explain. Done? short summary.
+%sFirst: read .forge-ai/instructions.md. Inspect relevant files only. Skip configs unless needed. Current repo only. No parent/sibling dirs. Read relevant AGENTS.md/CLAUDE.md. Never print secrets/full env. Prefix shell cmds with 'rtk'. Keep changes minimal and focused. Preserve existing style and architecture unless instructed otherwise. If an attempt failed, clean up abandoned code before moving on. Bugfixes must fix the root cause when possible; do not patch only symptoms. Structure code cleanly from the start with sensible architecture, not everything in one file. Implement. Blocked? explain. Done? short summary.
 
 Done: write one-line conventional commit msg to ".forge-ai-commit-msg". No commit. No push.`,
 		ticket.Owner, ticket.Repo, ticket.Kind, ticket.Number, branch, base, ticket.HTMLURL, ticket.Title, ticket.Body, strings.TrimSpace(ticket.Instruction), gitPolicy, toolSection)
