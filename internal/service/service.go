@@ -478,7 +478,7 @@ func (s *Service) ensurePullRequest(ctx context.Context, fc Forgejo, ticket forg
 		return nil, err
 	}
 	if existing != nil {
-		if existing.Base.Ref != base {
+		if forgejo.ShortBranch(existing.Base.Ref) != base {
 			return fc.UpdatePullRequest(ctx, ticket.Owner, ticket.Repo, existing.NumberValue(), forgejo.UpdatePullRequestRequest{
 				Base: base,
 			})

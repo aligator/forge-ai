@@ -1,6 +1,9 @@
 package forgejo
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 type WebhookPayload struct {
 	Action     string       `json:"action"`
@@ -142,15 +145,15 @@ func TicketFromPayload(event string, payload WebhookPayload) (Ticket, bool) {
 			Owner:         owner,
 			Repo:          repo.Name,
 			CloneURL:      firstNonEmpty(pull.Head.Repo.CloneURL, pull.Head.Repo.SSHURL, repo.CloneURL, repo.SSHURL),
-			DefaultBranch: firstNonEmpty(repo.DefaultBranch, pull.Base.Ref, "main"),
+			DefaultBranch: firstNonEmpty(repo.DefaultBranch, ShortBranch(pull.Base.Ref), "main"),
 			Kind:          "pr",
 			Number:        pull.NumberValue(),
 			Title:         pull.Title,
 			Body:          pull.Body,
 			HTMLURL:       pull.HTMLURL,
 			Labels:        pull.Labels,
-			HeadBranch:    pull.Head.Ref,
-			BaseBranch:    firstNonEmpty(pull.Base.Ref, repo.DefaultBranch, "main"),
+			HeadBranch:    ShortBranch(pull.Head.Ref),
+			BaseBranch:    firstNonEmpty(ShortBranch(pull.Base.Ref), repo.DefaultBranch, "main"),
 			CommentID:     commentID(payload),
 			Instruction:   commentBody(payload),
 		}, pull.NumberValue() != 0
@@ -177,7 +180,7 @@ func TicketFromPayload(event string, payload WebhookPayload) (Ticket, bool) {
 		Body:          issue.Body,
 		HTMLURL:       issue.HTMLURL,
 		Labels:        issue.Labels,
-		BaseBranch:    firstNonEmpty(issue.Ref, repo.DefaultBranch, "main"),
+		BaseBranch:    firstNonEmpty(ShortBranch(issue.Ref), repo.DefaultBranch, "main"),
 		CommentID:     commentID(payload),
 		Instruction:   commentBody(payload),
 	}, issue.NumberValue() != 0
@@ -215,6 +218,10 @@ func commentBody(payload WebhookPayload) string {
 		return firstNonEmpty(values...)
 	}
 	return ""
+}
+
+func ShortBranch(ref string) string {
+	return strings.TrimPrefix(ref, "refs/heads/")
 }
 
 func firstNonEmpty(values ...string) string {
