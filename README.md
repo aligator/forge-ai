@@ -20,10 +20,16 @@ forge-ai/<owner>/<repo>/<issue-or-pr>-<number>
 
 ## Local Forgejo
 
+Create a local env file:
+
+```bash
+cp .env.example .env
+```
+
 Terminal 1:
 
 ```bash
-docker compose up
+docker compose --profile host up
 ```
 
 Terminal 2:
@@ -32,7 +38,7 @@ Terminal 2:
 go run .
 ```
 
-`docker compose up` starts Forgejo, creates an admin user, creates `forge-ai/demo`, creates one demo issue, and installs a webhook that points back to your host at `host.lima.internal:8080`. `go run .` starts `forge-ai` locally and creates its own dev token from the bootstrap login.
+`docker compose --profile host up` starts a host-dev Forgejo instance, creates an admin user, creates `forge-ai/demo`, creates one demo issue, and installs a webhook that points back to `go run .` on your host via `http://host.docker.internal:8080/webhook`. `go run .` starts `forge-ai` locally and creates its own dev token from the bootstrap login.
 
 The dev Compose setup uses the normal Forgejo image, pinned to `codeberg.org/forgejo/forgejo:15`.
 
@@ -46,7 +52,7 @@ Password: user-password
 
 The automation/admin account is `forge-ai / forge-ai-password`.
 
-The default local agent is `codex exec --sandbox workspace-write`. To trigger a run, comment with `@forge-ai` on an issue or pull request.
+The `.env.example` default local agent is a no-credential mock agent. It is useful for webhook and branch-flow smoke tests. To trigger it, comment with `@forge-ai` on an issue or pull request. To use a real CLI, edit `.env` or export `AGENT_0_*` variables before `go run .`.
 
 For pull requests, use a normal conversation comment. Forgejo currently sends inline diff review submissions as `pull_request_comment/reviewed`, but the dev instance may deliver that payload with an empty `review.content`, so there is no mention text for `forge-ai` to read.
 
@@ -63,24 +69,23 @@ No Forgejo data volume or host bootstrap directory is used; after `docker compos
 ```bash
 FORGEJO_URL=https://forgejo.example.com \
 FORGEJO_TOKEN=<token> \
-docker compose --profile prod up -d
+docker compose --profile full up -d
 ```
 
-The `prod` profile builds the forge-ai image (includes claude, codex, opencode, and Homebrew for the `agent` user) and mounts AI CLI credentials from the host:
+The `full` profile builds the forge-ai image. The image includes claude, codex, opencode, Playwright MCP, Forgejo MCP, RTK, and single-user Nix for the `agent` user. It mounts AI CLI credentials from the host:
 
 | Volume | Default host path |
 |--------|------------------|
-| Claude config | `~/.claude` |
-| Codex config | `~/.codex` |
-| opencode config | `~/.config/opencode` |
+| Claude credentials | `~/.claude/.credentials.json` |
+| Codex auth | `~/.codex/auth.json` |
 
-Override with `CLAUDE_CONFIG_DIR`, `CODEX_CONFIG_DIR`, `OPENCODE_CONFIG_DIR`. Workspaces persist in a named Docker volume (`forge-ai-workspaces`).
+Override with `CLAUDE_CREDENTIALS` and `CODEX_CREDENTIALS`. Workspaces persist in a named Docker volume (`forge-ai-workspaces`).
 
 `FORGEJO_URL` is required. All other variables have defaults matching the dev setup.
 
 ## Agent configuration
 
-For host dev, the agent runs on your machine, not inside Docker. That means normal subscription auth works as-is:
+For host dev, the agent runs on your machine, not inside Docker. That means normal subscription auth works as-is after you configure a real agent:
 
 ```bash
 codex login
@@ -88,10 +93,11 @@ codex login
 # or: opencode, then /connect
 ```
 
-Use another CLI by exporting env vars before `go run .`. Leave `AGENT_0_COMMAND` empty so the service appends the ticket prompt as the final CLI argument:
+Use another CLI by editing `.env` or exporting env vars before `go run .`. Leave `AGENT_0_COMMAND` empty so the service appends the ticket prompt as the final CLI argument:
 
 ```bash
 AGENT_0_USER=claude AGENT_0_BIN=claude AGENT_0_ARGS="--dangerously-skip-permissions --allowedTools Bash,Read,Write,Edit,MultiEdit,Glob,Grep -p" go run .
+AGENT_0_USER=codex AGENT_0_BIN=codex AGENT_0_ARGS="exec --sandbox workspace-write" go run .
 AGENT_0_USER=opencode AGENT_0_BIN=opencode AGENT_0_ARGS=run go run .
 ```
 
@@ -125,12 +131,14 @@ FORGEJO_TOKEN=<optional token with repo read/write and issue/pr access>
 FORGEJO_BOOTSTRAP_TOKEN=true
 FORGEJO_BOOTSTRAP_USER=forge-ai
 FORGEJO_BOOTSTRAP_PASSWORD=forge-ai-password
+FORGEJO_BOOTSTRAP_TOKEN_NAME=forge-ai-local
 CLONE_URL_BASE=http://localhost:3000
 WEBHOOK_SECRET=<optional>
 WORKSPACE_DIR=.forge-ai/workspaces
 BRANCH_PREFIX=forge-ai
 CREATE_PR=true
 MAX_CONCURRENT=1
+AGENT_ALLOW_GIT=false
 GIT_USER_NAME=forge-ai
 GIT_USER_EMAIL=forge-ai@example.invalid
 AGENT_0_USER=forge-ai
@@ -138,6 +146,9 @@ AGENT_0_BIN=<agent executable>
 AGENT_0_ARGS=<optional args>
 AGENT_0_COMMAND=<optional shell wrapper>
 AGENT_0_TIMEOUT=30m
+AGENT_0_PASSWORD=<optional Forgejo password for per-agent token bootstrap>
+AGENT_0_TOKEN=<optional per-agent Forgejo token>
+AGENT_0_TOKEN_FILE=<optional per-agent Forgejo token file>
 AGENT_0_GIT_USER_NAME=<optional agent override>
 AGENT_0_GIT_USER_EMAIL=<optional agent override>
 ```
