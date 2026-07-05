@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"codeberg.org/forge-ai/internal/config"
+	"codeberg.org/forge-ai/internal/dashboard"
 	"codeberg.org/forge-ai/internal/forgejo"
 )
 
@@ -20,12 +21,13 @@ type Workflow interface {
 	Handle(context.Context, string, forgejo.WebhookPayload) error
 }
 
-func New(cfg config.Config, workflow Workflow, logger *slog.Logger) http.Handler {
+func New(cfg config.Config, workflow Workflow, dashboardStore dashboard.Store, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("POST /webhook", handleWebhook(cfg, workflow, logger))
+	dashboard.New(cfg, dashboardStore, logger).Register(mux)
 	return mux
 }
 

@@ -36,6 +36,11 @@ type RunStore interface {
 	AddLink(context.Context, LinkInput) error
 }
 
+type ListRunsOptions struct {
+	Limit  int
+	Status Status
+}
+
 type Run struct {
 	ID           string
 	Kind         RunKind

@@ -101,7 +101,7 @@ func main() {
 
 	httpServer := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           server.New(cfg, workflow, logger),
+		Handler:           server.New(cfg, workflow, store, logger),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

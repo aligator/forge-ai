@@ -222,8 +222,46 @@ func (s *SQLiteStore) GetRun(ctx context.Context, id string) (Run, error) {
 	return scanRun(row)
 }
 
+func (s *SQLiteStore) ListRuns(ctx context.Context, opts ListRunsOptions) ([]Run, error) {
+	limit := opts.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+
+	query := `SELECT id, kind, status, owner, repo, ticket_kind, ticket_number, branch, base_branch,
+		agent_mention, agent_type, session_id, parent_run_id, started_at, finished_at, error, created_by
+		FROM runs`
+	args := []any{}
+	if opts.Status != "" {
+		query += ` WHERE status = ?`
+		args = append(args, opts.Status)
+	}
+	query += ` ORDER BY started_at DESC, id DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list runs: %w", err)
+	}
+	defer rows.Close()
+
+	var runs []Run
+	for rows.Next() {
+		run, err := scanRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
+}
+
 func (s *SQLiteStore) ListEvents(ctx context.Context, runID string) ([]Event, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, run_id, ts, type, message, data_json FROM run_events WHERE run_id = ? ORDER BY id`, runID)
+	return s.ListEventsSince(ctx, runID, 0)
+}
+
+func (s *SQLiteStore) ListEventsSince(ctx context.Context, runID string, sinceID int64) ([]Event, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, run_id, ts, type, message, data_json FROM run_events WHERE run_id = ? AND id > ? ORDER BY id`, runID, sinceID)
 	if err != nil {
 		return nil, fmt.Errorf("list run events: %w", err)
 	}
@@ -242,7 +280,11 @@ func (s *SQLiteStore) ListEvents(ctx context.Context, runID string) ([]Event, er
 }
 
 func (s *SQLiteStore) ListLogChunks(ctx context.Context, runID string) ([]LogChunk, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, run_id, ts, stream, chunk FROM run_logs WHERE run_id = ? ORDER BY id`, runID)
+	return s.ListLogChunksSince(ctx, runID, 0)
+}
+
+func (s *SQLiteStore) ListLogChunksSince(ctx context.Context, runID string, sinceID int64) ([]LogChunk, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, run_id, ts, stream, chunk FROM run_logs WHERE run_id = ? AND id > ? ORDER BY id`, runID, sinceID)
 	if err != nil {
 		return nil, fmt.Errorf("list run log chunks: %w", err)
 	}

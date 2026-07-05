@@ -3,3 +3,4 @@
 !.forge-ai/instructions.md
 .env
 dist
+.cache/
