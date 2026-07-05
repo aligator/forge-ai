@@ -59,6 +59,7 @@ type Review struct {
 type Issue struct {
 	Index       int       `json:"index"`
 	Number      int       `json:"number"`
+	Ref         string    `json:"ref"`
 	Title       string    `json:"title"`
 	Body        string    `json:"body"`
 	HTMLURL     string    `json:"html_url"`
@@ -105,6 +106,10 @@ type CreatePullRequestRequest struct {
 	Head  string `json:"head"`
 	Title string `json:"title"`
 	Body  string `json:"body"`
+}
+
+type UpdatePullRequestRequest struct {
+	Base string `json:"base,omitempty"`
 }
 
 type Ticket struct {
@@ -172,7 +177,7 @@ func TicketFromPayload(event string, payload WebhookPayload) (Ticket, bool) {
 		Body:          issue.Body,
 		HTMLURL:       issue.HTMLURL,
 		Labels:        issue.Labels,
-		BaseBranch:    firstNonEmpty(repo.DefaultBranch, "main"),
+		BaseBranch:    firstNonEmpty(issue.Ref, repo.DefaultBranch, "main"),
 		CommentID:     commentID(payload),
 		Instruction:   commentBody(payload),
 	}, issue.NumberValue() != 0

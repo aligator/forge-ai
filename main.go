@@ -78,6 +78,10 @@ func main() {
 		route.Agent.ExtraEnv = []string{
 			"FORGEJO_ACCESS_TOKEN=" + token,
 			"FORGEJO_URL=" + cfg.ForgejoURL,
+			"GIT_AUTHOR_NAME=" + route.Git.UserName,
+			"GIT_AUTHOR_EMAIL=" + route.Git.UserEmail,
+			"GIT_COMMITTER_NAME=" + route.Git.UserName,
+			"GIT_COMMITTER_EMAIL=" + route.Git.UserEmail,
 		}
 		agents[key] = agent.NewRunner(route.Agent, logger)
 		forgejoClients[key] = forgejo.NewClient(cfg.ForgejoURL, token)
