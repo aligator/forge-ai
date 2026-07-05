@@ -34,6 +34,13 @@ func (g *Git) Prepare(ctx context.Context, workspaceRoot, cloneURL, token, owner
 
 	workdir := filepath.Join(workspaceRoot, Slug(owner+"-"+repo+"-"+branch))
 	if _, err := os.Stat(filepath.Join(workdir, ".git")); os.IsNotExist(err) {
+		// Remove stale directory left by a previously interrupted clone.
+		if _, statErr := os.Stat(workdir); statErr == nil {
+			g.logger.Warn("removing stale workspace without .git", "workdir", workdir)
+			if err := os.RemoveAll(workdir); err != nil {
+				return "", err
+			}
+		}
 		if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
 			return "", err
 		}
@@ -45,7 +52,13 @@ func (g *Git) Prepare(ctx context.Context, workspaceRoot, cloneURL, token, owner
 	if dirty, err := g.IsDirty(ctx, workdir); err != nil {
 		return "", err
 	} else if dirty {
-		return "", fmt.Errorf("workspace %s has uncommitted changes", workdir)
+		g.logger.Warn("workspace dirty, resetting to HEAD", "workdir", workdir)
+		if _, err := run(ctx, workdir, "git", "reset", "--hard", "HEAD"); err != nil {
+			return "", err
+		}
+		if _, err := run(ctx, workdir, "git", "clean", "-fd"); err != nil {
+			return "", err
+		}
 	}
 
 	if _, err := run(ctx, workdir, "git", "config", "user.name", identity.UserName); err != nil {
