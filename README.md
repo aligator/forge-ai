@@ -88,11 +88,11 @@ codex login
 # or: opencode, then /connect
 ```
 
-Use another CLI by exporting env vars before `go run .`. Leave `AGENT_COMMAND` empty so the service appends the ticket prompt as the final CLI argument:
+Use another CLI by exporting env vars before `go run .`. Leave `AGENT_0_COMMAND` empty so the service appends the ticket prompt as the final CLI argument:
 
 ```bash
-AGENT_BIN=claude AGENT_ARGS="--dangerously-skip-permissions --allowedTools Bash,Read,Write,Edit,MultiEdit,Glob,Grep -p" go run .
-AGENT_BIN=opencode AGENT_ARGS=run go run .
+AGENT_0_USER=claude AGENT_0_BIN=claude AGENT_0_ARGS="--dangerously-skip-permissions --allowedTools Bash,Read,Write,Edit,MultiEdit,Glob,Grep -p" go run .
+AGENT_0_USER=opencode AGENT_0_BIN=opencode AGENT_0_ARGS=run go run .
 ```
 
 Git use inside the spawned agent is controlled by the prompt policy and the CLI args:
@@ -101,13 +101,15 @@ Git use inside the spawned agent is controlled by the prompt policy and the CLI 
 AGENT_ALLOW_GIT=false go run . # prompt: agent edits files only; forge-ai commits and pushes
 
 AGENT_ALLOW_GIT=true \
-  AGENT_ARGS="exec --sandbox danger-full-access" \
+  AGENT_0_ARGS="exec --sandbox danger-full-access" \
   go run .
 ```
 
-When `AGENT_ALLOW_GIT=true`, the prompt still tells the agent to stay on the prepared branch and only use git status, diff, add, and commit. It must not switch branches or push. The sandbox is just part of `AGENT_ARGS`; use `danger-full-access` if Codex should be able to write `.git`.
+When `AGENT_ALLOW_GIT=true`, the prompt still tells the agent to stay on the prepared branch and only use git status, diff, add, and commit. It must not switch branches or push. The sandbox is just part of `AGENT_0_ARGS`; use `danger-full-access` if Codex should be able to write `.git`.
 
-Use `AGENT_COMMAND` only for custom shell wrappers; the service exposes the prompt there as `FORGE_AI_PROMPT`.
+Commit identity defaults to `GIT_USER_NAME` and `GIT_USER_EMAIL`. Override it per configured agent with `AGENT_0_GIT_USER_NAME` and `AGENT_0_GIT_USER_EMAIL`. The selected identity is written to the worktree before the agent starts, so it applies both to forge-ai's automatic commit and to agent-created git commits.
+
+Use `AGENT_0_COMMAND` only for custom shell wrappers; the service exposes the prompt there as `FORGE_AI_PROMPT`.
 
 API keys are still possible, but they are not configured by default. For Claude specifically, do not set `ANTHROPIC_API_KEY` when you want subscription auth; Claude Code gives the API key precedence over subscription OAuth.
 
@@ -125,10 +127,17 @@ FORGEJO_BOOTSTRAP_USER=forge-ai
 FORGEJO_BOOTSTRAP_PASSWORD=forge-ai-password
 CLONE_URL_BASE=http://localhost:3000
 WEBHOOK_SECRET=<optional>
-TRIGGER_MENTION=@forge-ai
 WORKSPACE_DIR=.forge-ai/workspaces
 BRANCH_PREFIX=forge-ai
 CREATE_PR=true
 MAX_CONCURRENT=1
-AGENT_TIMEOUT=30m
+GIT_USER_NAME=forge-ai
+GIT_USER_EMAIL=forge-ai@example.invalid
+AGENT_0_USER=forge-ai
+AGENT_0_BIN=<agent executable>
+AGENT_0_ARGS=<optional args>
+AGENT_0_COMMAND=<optional shell wrapper>
+AGENT_0_TIMEOUT=30m
+AGENT_0_GIT_USER_NAME=<optional agent override>
+AGENT_0_GIT_USER_EMAIL=<optional agent override>
 ```

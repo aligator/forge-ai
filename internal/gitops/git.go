@@ -24,10 +24,11 @@ func New(cfg config.GitConfig, logger *slog.Logger) *Git {
 	return &Git{cfg: cfg, logger: logger}
 }
 
-func (g *Git) Prepare(ctx context.Context, workspaceRoot, cloneURL, token, owner, repo, branch, baseBranch string) (string, error) {
+func (g *Git) Prepare(ctx context.Context, workspaceRoot, cloneURL, token, owner, repo, branch, baseBranch string, identity config.GitIdentity) (string, error) {
 	if cloneURL == "" {
 		return "", fmt.Errorf("missing clone url")
 	}
+	identity = g.identity(identity)
 
 	workdir := filepath.Join(workspaceRoot, Slug(owner+"-"+repo+"-"+branch))
 	if _, err := os.Stat(filepath.Join(workdir, ".git")); os.IsNotExist(err) {
@@ -45,10 +46,10 @@ func (g *Git) Prepare(ctx context.Context, workspaceRoot, cloneURL, token, owner
 		return "", fmt.Errorf("workspace %s has uncommitted changes", workdir)
 	}
 
-	if _, err := run(ctx, workdir, "git", "config", "user.name", g.cfg.UserName); err != nil {
+	if _, err := run(ctx, workdir, "git", "config", "user.name", identity.UserName); err != nil {
 		return "", err
 	}
-	if _, err := run(ctx, workdir, "git", "config", "user.email", g.cfg.UserEmail); err != nil {
+	if _, err := run(ctx, workdir, "git", "config", "user.email", identity.UserEmail); err != nil {
 		return "", err
 	}
 	if _, err := run(ctx, workdir, "git", "remote", "set-url", g.cfg.RemoteName, withToken(cloneURL, token)); err != nil {
@@ -83,6 +84,16 @@ func (g *Git) Prepare(ctx context.Context, workspaceRoot, cloneURL, token, owner
 	}
 
 	return workdir, nil
+}
+
+func (g *Git) identity(identity config.GitIdentity) config.GitIdentity {
+	if identity.UserName == "" {
+		identity.UserName = g.cfg.UserName
+	}
+	if identity.UserEmail == "" {
+		identity.UserEmail = g.cfg.UserEmail
+	}
+	return identity
 }
 
 func (g *Git) IsDirty(ctx context.Context, workdir string) (bool, error) {
