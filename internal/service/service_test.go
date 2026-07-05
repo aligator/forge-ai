@@ -65,6 +65,47 @@ func TestPromptTellsAgentToCommunicateViaForgejoMCP(t *testing.T) {
 	}
 }
 
+func TestPromptTellsAgentWhenNotToImplement(t *testing.T) {
+	got := prompt(forgejo.Ticket{
+		Owner:       "ac",
+		Repo:        "demo",
+		Kind:        "issue",
+		Number:      1,
+		Instruction: "@forge-ai what would you change?",
+	}, "forge-ai/ac/demo/issue-1", "main", false, "")
+
+	for _, want := range []string{
+		"If the user asks clear questions or asks for analysis/advice, answer only",
+		"do not implement unless the user asks for code changes",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("prompt() missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+func TestPromptTellsAgentToKeepImplementationClean(t *testing.T) {
+	got := prompt(forgejo.Ticket{
+		Owner:       "ac",
+		Repo:        "demo",
+		Kind:        "issue",
+		Number:      1,
+		Instruction: "@forge-ai implement",
+	}, "forge-ai/ac/demo/issue-1", "main", false, "")
+
+	for _, want := range []string{
+		"Keep changes minimal and focused",
+		"Preserve existing style and architecture",
+		"clean up abandoned code",
+		"fix the root cause when possible",
+		"Structure code cleanly from the start",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("prompt() missing %q in:\n%s", want, got)
+		}
+	}
+}
+
 func TestShouldRunOnlyForMention(t *testing.T) {
 	svc := New(Options{
 		Config: config.Config{
