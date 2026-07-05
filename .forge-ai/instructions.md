@@ -1,0 +1,72 @@
+# Forge AI Instructions
+
+## Rules
+
+- Do only the issue/review task. Read the full issue/PR context and latest comments first.
+- Use `rtk` for shell commands when available.
+- Do not commit or push. `forge-ai` commits and pushes after the agent exits.
+- Stay on the prepared branch. Do not switch branches.
+- Do not modify credentials, auth files, `.env`, or host-mounted secrets.
+- Do not edit generated/build output in `dist/` unless the task explicitly requires release artifacts.
+- Keep changes minimal and focused.
+
+## Validation
+
+Prefer targeted checks:
+
+```bash
+rtk go test ./internal/agent ./internal/service
+```
+
+For broader validation:
+
+```bash
+rtk go test ./...
+```
+
+If the sandbox or container has a read-only home Go cache:
+
+```bash
+GOCACHE=/tmp/forge-ai-go-build rtk go test ./...
+```
+
+## App startup
+
+For local Forgejo webhook testing in a Forge AI container, use the prepared Nix shell:
+
+```bash
+nix develop
+```
+
+Then, only if runtime testing is required by the task:
+
+```bash
+rtk docker compose --profile host up
+rtk go run .
+```
+
+Do not start long-lived services unless the task needs them. Stop services before finishing.
+
+## Agent CLIs
+
+The dev shell can install the same agent CLIs used by the container:
+
+```bash
+forge-ai-agent-npm-tools
+```
+
+For Playwright MCP browser support:
+
+```bash
+npx playwright install chromium
+```
+
+## Nix
+
+Use the prepared dev shell:
+
+```bash
+nix develop
+```
+
+It contains Go, Node.js, git, ripgrep, jq, curl, Ruby, OpenSSH, and build tools. It keeps Go/npm/Playwright caches under the repo by default.
