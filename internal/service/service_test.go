@@ -367,6 +367,39 @@ func TestHandleRecordsRunStatusEventsLogsAndLinks(t *testing.T) {
 	}
 }
 
+func TestRunAgentPersistsStreamingLogChunks(t *testing.T) {
+	store := &recordingRunStore{}
+	svc := New(Options{
+		Config:   config.Config{MaxConcurrent: 1},
+		RunStore: store,
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	agent := &streamingStubAgent{
+		chunks: []agent.OutputChunk{
+			{Stream: agent.StreamStdout, Chunk: "out\n"},
+			{Stream: agent.StreamStderr, Chunk: "err\n"},
+		},
+		result: agent.Result{Output: "out\nerr", SessionID: "session-123"},
+	}
+
+	result, err := svc.runAgent(context.Background(), agent, t.TempDir(), "prompt", "", "run-1")
+	if err != nil {
+		t.Fatalf("runAgent() error = %v", err)
+	}
+	if result.SessionID != "session-123" {
+		t.Fatalf("SessionID = %q, want session-123", result.SessionID)
+	}
+	if len(store.logs) != 2 {
+		t.Fatalf("logs = %+v, want two chunks", store.logs)
+	}
+	if store.logs[0].Stream != "stdout" || store.logs[0].Chunk != "out\n" || store.logs[1].Stream != "stderr" || store.logs[1].Chunk != "err\n" {
+		t.Fatalf("logs = %+v, want stdout/stderr chunks", store.logs)
+	}
+	if len(store.runs) > 0 && store.runs[0].SessionID != "session-123" {
+		t.Fatalf("stored session = %q, want session-123", store.runs[0].SessionID)
+	}
+}
+
 type stubAgent struct {
 	name   string
 	result agent.Result
@@ -374,6 +407,27 @@ type stubAgent struct {
 }
 
 func (a *stubAgent) Run(_ context.Context, _, _, _ string) (agent.Result, error) {
+	return a.result, a.err
+}
+
+type streamingStubAgent struct {
+	result agent.Result
+	chunks []agent.OutputChunk
+	err    error
+}
+
+func (a *streamingStubAgent) Run(context.Context, string, string, string) (agent.Result, error) {
+	return agent.Result{}, errors.New("Run should not be called")
+}
+
+func (a *streamingStubAgent) RunWithOptions(_ context.Context, options agent.RunOptions) (agent.Result, error) {
+	for _, chunk := range a.chunks {
+		if options.Output != nil {
+			if err := options.Output.WriteOutput(chunk); err != nil {
+				return agent.Result{}, err
+			}
+		}
+	}
 	return a.result, a.err
 }
 

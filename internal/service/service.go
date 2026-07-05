@@ -36,6 +36,10 @@ type Agent interface {
 	Run(context.Context, string, string, string) (agent.Result, error)
 }
 
+type optionsAgent interface {
+	RunWithOptions(context.Context, agent.RunOptions) (agent.Result, error)
+}
+
 type Options struct {
 	Config         config.Config
 	Forgejo        Forgejo
@@ -242,8 +246,7 @@ func (s *Service) run(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, ag
 	s.logger.Info("workspace ready", "workdir", workdir, "branch", branch)
 	s.logWorkspaceFiles(workdir, "before agent run")
 	sessionID := sessionIDFromInstruction(ticket.Instruction, s.cfg.Agents)
-	result, agentErr := ag.Run(ctx, workdir, prompt(ticket, branch, base, s.cfg.AgentAllowGit, s.cfg.AgentToolHints), sessionID)
-	s.recordAgentResult(ctx, run.ID, result)
+	result, agentErr := s.runAgent(ctx, ag, workdir, prompt(ticket, branch, base, s.cfg.AgentAllowGit, s.cfg.AgentToolHints), sessionID, run.ID)
 	s.logWorkspaceFiles(workdir, "after agent run")
 	if agentErr != nil {
 		err := fmt.Errorf("agent failed: %w", agentErr)
@@ -359,25 +362,72 @@ func (s *Service) finishRun(ctx context.Context, runID string, status runstore.S
 	s.addRunEvent(ctx, runID, string(status), message)
 }
 
+func (s *Service) runAgent(ctx context.Context, ag Agent, workdir, prompt, sessionID, runID string) (agent.Result, error) {
+	if streaming, ok := ag.(optionsAgent); ok {
+		result, err := streaming.RunWithOptions(ctx, agent.RunOptions{
+			Workdir:   workdir,
+			Prompt:    prompt,
+			SessionID: sessionID,
+			Output:    runLogWriter{ctx: ctx, store: s.runStore, runID: runID, logger: s.logger},
+		})
+		s.recordAgentSession(ctx, runID, result.SessionID)
+		return result, err
+	}
+	result, err := ag.Run(ctx, workdir, prompt, sessionID)
+	s.recordAgentResult(ctx, runID, result)
+	return result, err
+}
+
 func (s *Service) recordAgentResult(ctx context.Context, runID string, result agent.Result) {
+	s.recordAgentSession(ctx, runID, result.SessionID)
+	if s.runStore == nil || runID == "" || result.Output == "" {
+		return
+	}
+	if err := s.runStore.AddLogChunk(ctx, runstore.LogChunkInput{
+		RunID:  runID,
+		Time:   timeNow(),
+		Stream: "combined",
+		Chunk:  result.Output,
+	}); err != nil {
+		s.logger.Warn("record run log failed", "run_id", runID, "error", err)
+	}
+}
+
+func (s *Service) recordAgentSession(ctx context.Context, runID, sessionID string) {
 	if s.runStore == nil || runID == "" {
 		return
 	}
-	if strings.TrimSpace(result.SessionID) != "" {
-		if err := s.runStore.SetSessionID(ctx, runID, result.SessionID); err != nil {
+	if strings.TrimSpace(sessionID) != "" {
+		if err := s.runStore.SetSessionID(ctx, runID, sessionID); err != nil {
 			s.logger.Warn("record run session failed", "run_id", runID, "error", err)
 		}
 	}
-	if result.Output != "" {
-		if err := s.runStore.AddLogChunk(ctx, runstore.LogChunkInput{
-			RunID:  runID,
-			Time:   timeNow(),
-			Stream: "combined",
-			Chunk:  result.Output,
-		}); err != nil {
-			s.logger.Warn("record run log failed", "run_id", runID, "error", err)
-		}
+}
+
+type runLogWriter struct {
+	ctx    context.Context
+	store  runstore.RunStore
+	runID  string
+	logger *slog.Logger
+}
+
+func (w runLogWriter) WriteOutput(chunk agent.OutputChunk) error {
+	if w.store == nil || w.runID == "" || chunk.Chunk == "" {
+		return nil
 	}
+	if chunk.Time.IsZero() {
+		chunk.Time = timeNow()
+	}
+	err := w.store.AddLogChunk(w.ctx, runstore.LogChunkInput{
+		RunID:  w.runID,
+		Time:   chunk.Time,
+		Stream: string(chunk.Stream),
+		Chunk:  chunk.Chunk,
+	})
+	if err != nil && w.logger != nil {
+		w.logger.Warn("record run log failed", "run_id", w.runID, "stream", chunk.Stream, "error", err)
+	}
+	return err
 }
 
 func (s *Service) addRunEvent(ctx context.Context, runID, eventType, message string) {

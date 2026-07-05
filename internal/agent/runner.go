@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
+	"time"
 
 	"codeberg.org/forge-ai/internal/config"
 )
@@ -23,22 +25,55 @@ type Result struct {
 	SessionID string
 }
 
+type Stream string
+
+const (
+	StreamStdout Stream = "stdout"
+	StreamStderr Stream = "stderr"
+)
+
+type OutputChunk struct {
+	Time   time.Time
+	Stream Stream
+	Chunk  string
+}
+
+type OutputWriter interface {
+	WriteOutput(OutputChunk) error
+}
+
+type RunOptions struct {
+	Workdir   string
+	Prompt    string
+	SessionID string
+	Stdin     io.Reader
+	Output    OutputWriter
+}
+
 func NewRunner(cfg config.AgentConfig, logger *slog.Logger) *Runner {
 	return &Runner{cfg: cfg, logger: logger}
 }
 
 func (r *Runner) Run(ctx context.Context, workdir, prompt, sessionID string) (Result, error) {
+	return r.RunWithOptions(ctx, RunOptions{
+		Workdir:   workdir,
+		Prompt:    prompt,
+		SessionID: sessionID,
+	})
+}
+
+func (r *Runner) RunWithOptions(ctx context.Context, options RunOptions) (Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.cfg.Timeout)
 	defer cancel()
 
 	var cmd *exec.Cmd
-	knownSessionID := sessionID
+	knownSessionID := options.SessionID
 	adapter := adapterFor(r.cfg)
 	if r.cfg.CommandTemplate != "" {
 		cmd = exec.CommandContext(ctx, "sh", "-c", r.cfg.CommandTemplate)
-		cmd.Env = append(os.Environ(), append(r.cfg.ExtraEnv, "FORGE_AI_PROMPT="+prompt, "FORGE_AI_SESSION_ID="+sessionID)...)
+		cmd.Env = append(os.Environ(), append(r.cfg.ExtraEnv, "FORGE_AI_PROMPT="+options.Prompt, "FORGE_AI_SESSION_ID="+options.SessionID)...)
 	} else {
-		invocation := adapter.Invocation(r.cfg.Args, prompt, sessionID)
+		invocation := adapter.Invocation(r.cfg.Args, options.Prompt, options.SessionID)
 		if invocation.SessionID != "" {
 			knownSessionID = invocation.SessionID
 		}
@@ -47,28 +82,35 @@ func (r *Runner) Run(ctx context.Context, workdir, prompt, sessionID string) (Re
 			cmd.Env = append(os.Environ(), r.cfg.ExtraEnv...)
 		}
 	}
-	cmd.Dir = workdir
-	cmd.Stdin = nil // explicitly closed; subprocesses that read stdin get immediate EOF
+	cmd.Dir = options.Workdir
+	cmd.Stdin = options.Stdin // nil explicitly closes stdin; subprocesses that read get immediate EOF
 
-	var output bytes.Buffer
-	cmd.Stdout = io.MultiWriter(&output, os.Stdout)
-	cmd.Stderr = io.MultiWriter(&output, os.Stderr)
+	collector := newOutputCollector(12000, adapter, knownSessionID)
+	redactor := NewRedactor(cmd.Env)
+	stdout := newProcessOutputWriter(StreamStdout, os.Stdout, options.Output, collector, redactor.Stream())
+	stderr := newProcessOutputWriter(StreamStderr, os.Stderr, options.Output, collector, redactor.Stream())
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 
-	r.logger.Info("starting agent", "workdir", workdir, "command", commandLine(cmd), "session_id", knownSessionID)
-	if out, err := exec.CommandContext(ctx, "find", workdir, "-maxdepth", "3", "-not", "-path", "*/.git/*").Output(); err == nil {
+	r.logger.Info("starting agent", "workdir", options.Workdir, "command", commandLine(cmd), "session_id", knownSessionID)
+	if out, err := exec.CommandContext(ctx, "find", options.Workdir, "-maxdepth", "3", "-not", "-path", "*/.git/*").Output(); err == nil {
 		r.logger.Debug("workspace contents", "files", strings.TrimSpace(string(out)))
 	}
 	err := cmd.Run()
+	stdout.Close()
+	stderr.Close()
 	if err != nil {
 		r.logger.Error("agent failed", "error", err)
 	} else {
 		r.logger.Info("agent finished")
 	}
-	redacted := redact(output.String(), cmd.Env)
-	if knownSessionID == "" {
-		knownSessionID = adapter.ExtractSessionID(redacted)
+	if writerErr := stdout.Err(); writerErr != nil && err == nil {
+		err = writerErr
 	}
-	return Result{Output: tail(redacted, 12000), SessionID: knownSessionID}, err
+	if writerErr := stderr.Err(); writerErr != nil && err == nil {
+		err = writerErr
+	}
+	return Result{Output: collector.Tail(), SessionID: collector.SessionID()}, err
 }
 
 func appendExecSubcommand(args []string, subcommand, sessionID string) []string {
@@ -135,14 +177,174 @@ func tail(value string, limit int) string {
 }
 
 func redact(value string, env []string) string {
+	return NewRedactor(env).Redact(value)
+}
+
+type outputCollector struct {
+	mu        sync.Mutex
+	output    bytes.Buffer
+	limit     int
+	adapter   Adapter
+	sessionID string
+}
+
+func newOutputCollector(limit int, adapter Adapter, sessionID string) *outputCollector {
+	return &outputCollector{limit: limit, adapter: adapter, sessionID: sessionID}
+}
+
+func (c *outputCollector) Write(chunk string) {
+	if chunk == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.output.WriteString(chunk)
+	if c.limit > 0 && c.output.Len() > c.limit {
+		value := c.output.String()
+		c.output.Reset()
+		c.output.WriteString(value[len(value)-c.limit:])
+	}
+	if c.sessionID == "" {
+		c.sessionID = c.adapter.ExtractSessionID(c.output.String())
+	}
+}
+
+func (c *outputCollector) Tail() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return tail(c.output.String(), c.limit)
+}
+
+func (c *outputCollector) SessionID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sessionID
+}
+
+type processOutputWriter struct {
+	stream    Stream
+	console   io.Writer
+	output    OutputWriter
+	collector *outputCollector
+	redactor  *StreamRedactor
+	mu        sync.Mutex
+	err       error
+}
+
+func newProcessOutputWriter(stream Stream, console io.Writer, output OutputWriter, collector *outputCollector, redactor *StreamRedactor) *processOutputWriter {
+	return &processOutputWriter{
+		stream:    stream,
+		console:   console,
+		output:    output,
+		collector: collector,
+		redactor:  redactor,
+	}
+}
+
+func (w *processOutputWriter) Write(p []byte) (int, error) {
+	w.writeRedacted(w.redactor.RedactChunk(string(p)))
+	return len(p), nil
+}
+
+func (w *processOutputWriter) Close() {
+	w.writeRedacted(w.redactor.Close())
+}
+
+func (w *processOutputWriter) Err() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.err
+}
+
+func (w *processOutputWriter) writeRedacted(chunk string) {
+	if chunk == "" {
+		return
+	}
+	w.collector.Write(chunk)
+	if _, err := io.WriteString(w.console, chunk); err != nil {
+		w.setErr(err)
+	}
+	if w.output != nil {
+		if err := w.output.WriteOutput(OutputChunk{Time: time.Now().UTC(), Stream: w.stream, Chunk: chunk}); err != nil {
+			w.setErr(err)
+		}
+	}
+}
+
+func (w *processOutputWriter) setErr(err error) {
+	if err == nil {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.err == nil {
+		w.err = err
+	}
+}
+
+type Redactor struct {
+	secrets []string
+	keep    int
+}
+
+func NewRedactor(env []string) Redactor {
+	var secrets []string
 	for _, item := range env {
 		key, secret, ok := strings.Cut(item, "=")
 		if !ok || secret == "" || !sensitiveEnvKey(key) || len(secret) < 8 {
 			continue
 		}
+		secrets = append(secrets, secret)
+	}
+	keep := 0
+	for _, secret := range secrets {
+		if len(secret)-1 > keep {
+			keep = len(secret) - 1
+		}
+	}
+	return Redactor{secrets: secrets, keep: keep}
+}
+
+func (r Redactor) Redact(value string) string {
+	for _, secret := range r.secrets {
 		value = strings.ReplaceAll(value, secret, "<redacted>")
 	}
 	return value
+}
+
+func (r Redactor) Stream() *StreamRedactor {
+	return &StreamRedactor{redactor: r}
+}
+
+type StreamRedactor struct {
+	redactor Redactor
+	pending  string
+}
+
+func (r *StreamRedactor) RedactChunk(chunk string) string {
+	if r.redactor.keep == 0 {
+		return chunk
+	}
+	value := r.pending + chunk
+	redacted := r.redactor.Redact(value)
+	if redacted != value {
+		r.pending = ""
+		return redacted
+	}
+	if len(value) <= r.redactor.keep {
+		r.pending = value
+		return ""
+	}
+	emitLen := len(value) - r.redactor.keep
+	emit := value[:emitLen]
+	r.pending = value[emitLen:]
+	return r.redactor.Redact(emit)
+}
+
+func (r *StreamRedactor) Close() string {
+	value := r.pending
+	r.pending = ""
+	return r.redactor.Redact(value)
 }
 
 func sensitiveEnvKey(key string) bool {
