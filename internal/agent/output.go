@@ -1,6 +1,9 @@
 package agent
 
-import "sync"
+import (
+	"log/slog"
+	"sync"
+)
 
 type Broadcaster struct {
 	mu          sync.Mutex
@@ -38,6 +41,7 @@ func (b *Broadcaster) WriteOutput(chunk OutputChunk) error {
 		select {
 		case subscriber <- chunk:
 		default:
+			slog.Warn("broadcaster: subscriber channel full, chunk dropped", "stream", chunk.Stream)
 		}
 	}
 	return nil

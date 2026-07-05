@@ -92,7 +92,7 @@ func (r *Runner) RunWithOptions(ctx context.Context, options RunOptions) (Result
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 
-	r.logger.Info("starting agent", "workdir", options.Workdir, "command", commandLine(cmd), "session_id", knownSessionID)
+	r.logger.Info("starting agent", "workdir", options.Workdir, "command", redactor.Redact(commandLine(cmd)), "session_id", knownSessionID)
 	if out, err := exec.CommandContext(ctx, "find", options.Workdir, "-maxdepth", "3", "-not", "-path", "*/.git/*").Output(); err == nil {
 		r.logger.Debug("workspace contents", "files", strings.TrimSpace(string(out)))
 	}
@@ -185,10 +185,20 @@ func commandLine(cmd *exec.Cmd) string {
 
 func tail(value string, limit int) string {
 	value = strings.TrimSpace(value)
-	if len(value) <= limit {
-		return value
+	return safeTail(value, limit)
+}
+
+// safeTail returns the last byteLimit bytes of s, adjusted forward to the next
+// valid UTF-8 rune boundary so multi-byte characters are never split.
+func safeTail(s string, byteLimit int) string {
+	if byteLimit <= 0 || len(s) <= byteLimit {
+		return s
 	}
-	return value[len(value)-limit:]
+	offset := len(s) - byteLimit
+	for offset < len(s) && s[offset]&0xC0 == 0x80 {
+		offset++
+	}
+	return s[offset:]
 }
 
 func redact(value string, env []string) string {
@@ -217,7 +227,7 @@ func (c *outputCollector) Write(chunk string) {
 	if c.limit > 0 && c.output.Len() > c.limit {
 		value := c.output.String()
 		c.output.Reset()
-		c.output.WriteString(value[len(value)-c.limit:])
+		c.output.WriteString(safeTail(value, c.limit))
 	}
 	if c.sessionID == "" {
 		c.sessionID = c.adapter.ExtractSessionID(c.output.String())
@@ -306,6 +316,8 @@ func NewRedactor(env []string) Redactor {
 	var secrets []string
 	for _, item := range env {
 		key, secret, ok := strings.Cut(item, "=")
+		// Minimum length of 8 avoids false positives: short values like "yes",
+		// "true", or "1" are too common in non-secret env vars to redact safely.
 		if !ok || secret == "" || !sensitiveEnvKey(key) || len(secret) < 8 {
 			continue
 		}

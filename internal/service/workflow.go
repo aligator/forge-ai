@@ -198,7 +198,7 @@ func (r *workflowRunner) runAgent(ctx context.Context, ag Agent, workdir, prompt
 			Workdir:   workdir,
 			Prompt:    prompt,
 			SessionID: sessionID,
-			Output:    runLogWriter{ctx: ctx, store: r.runStore, runID: runID, logger: r.logger},
+			Output:    runLogWriter{store: r.runStore, runID: runID, logger: r.logger},
 		})
 		r.recordAgentSession(ctx, runID, result.SessionID)
 		return result, err
@@ -232,6 +232,10 @@ func (r *workflowRunner) finishRun(ctx context.Context, runID string, status run
 	r.addRunEvent(ctx, runID, string(status), message)
 }
 
+// recordAgentResult is used by the legacy (non-streaming) agent path. It writes
+// the full tail output as a single "combined" log chunk. The streaming path uses
+// recordAgentSession only — per-chunk stdout/stderr are written by runLogWriter
+// during execution, so no combined chunk is produced for streaming agents.
 func (r *workflowRunner) recordAgentResult(ctx context.Context, runID string, result agent.Result) {
 	r.recordAgentSession(ctx, runID, result.SessionID)
 	if r.runStore == nil || runID == "" || result.Output == "" {
@@ -259,7 +263,6 @@ func (r *workflowRunner) recordAgentSession(ctx context.Context, runID, sessionI
 }
 
 type runLogWriter struct {
-	ctx    context.Context
 	store  runstore.RunStore
 	runID  string
 	logger *slog.Logger
@@ -272,7 +275,7 @@ func (w runLogWriter) WriteOutput(chunk agent.OutputChunk) error {
 	if chunk.Time.IsZero() {
 		chunk.Time = timeNow()
 	}
-	err := w.store.AddLogChunk(w.ctx, runstore.LogChunkInput{
+	err := w.store.AddLogChunk(context.Background(), runstore.LogChunkInput{
 		RunID:  w.runID,
 		Time:   chunk.Time,
 		Stream: string(chunk.Stream),
