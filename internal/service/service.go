@@ -2,18 +2,19 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"codeberg.org/forge-ai/internal/agent"
 	"codeberg.org/forge-ai/internal/config"
 	"codeberg.org/forge-ai/internal/forgejo"
 	"codeberg.org/forge-ai/internal/gitops"
+	appruntime "codeberg.org/forge-ai/internal/runtime"
 )
 
 type Forgejo interface {
@@ -40,6 +41,7 @@ type Options struct {
 	ForgejoClients map[string]Forgejo // mention (lowercase) → per-route client; falls back to Forgejo
 	Git            Git
 	Agents         map[string]Agent // mention (lowercase) → runner
+	Runtime        *appruntime.Runtime
 	Logger         *slog.Logger
 }
 
@@ -49,22 +51,23 @@ type Service struct {
 	forgejoClients map[string]Forgejo
 	git            Git
 	agents         map[string]Agent
+	runtime        *appruntime.Runtime
 	logger         *slog.Logger
-	semaphore      chan struct{}
-	mu             sync.Mutex
-	activeTickets  map[string]struct{}
 }
 
 func New(options Options) *Service {
+	rt := options.Runtime
+	if rt == nil {
+		rt = appruntime.New(options.Config.MaxConcurrent)
+	}
 	return &Service{
 		cfg:            options.Config,
 		forgejo:        options.Forgejo,
 		forgejoClients: options.ForgejoClients,
 		git:            options.Git,
 		agents:         options.Agents,
+		runtime:        rt,
 		logger:         options.Logger,
-		semaphore:      make(chan struct{}, options.Config.MaxConcurrent),
-		activeTickets:  make(map[string]struct{}),
 	}
 }
 
@@ -133,33 +136,51 @@ func (s *Service) Handle(ctx context.Context, event string, payload forgejo.Webh
 		return nil
 	}
 
-	ref := ticket.Ref()
-	s.mu.Lock()
-	if _, busy := s.activeTickets[ref]; busy {
-		s.mu.Unlock()
-		s.logger.Info("ignored webhook, ticket already active", "ticket", ref)
-		return nil
-	}
-	s.activeTickets[ref] = struct{}{}
-	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		delete(s.activeTickets, ref)
-		s.mu.Unlock()
-	}()
-
 	mention, ag := s.findAgent(ticket.Instruction)
 	fc := s.forgejoFor(mention)
 	route := s.routeForMention(mention)
-
-	if err := s.postStartAckWith(ctx, fc, ticket); err != nil {
-		s.logger.Warn("post start acknowledgement failed", "comment_id", ticket.CommentID, "error", err)
+	branch := branchForTicket(s.cfg, ticket)
+	spec := appruntime.RunSpec{
+		TicketRef: ticket.Ref(),
+		Branch:    branch,
+		Owner:     ticket.Owner,
+		Repo:      ticket.Repo,
+		Kind:      ticket.Kind,
+		Number:    ticket.Number,
 	}
 
-	s.semaphore <- struct{}{}
-	defer func() { <-s.semaphore }()
+	err := s.runtime.SubmitWebhookRun(ctx, spec, func(runCtx context.Context) error {
+		if err := s.postStartAckWith(runCtx, fc, ticket); err != nil {
+			s.logger.Warn("post start acknowledgement failed", "comment_id", ticket.CommentID, "error", err)
+		}
+		return s.run(runCtx, fc, ticket, ag, route.Git)
+	})
+	switch {
+	case errors.Is(err, appruntime.ErrTicketActive):
+		s.logger.Info("ignored webhook, ticket already active", "ticket", ticket.Ref())
+		return nil
+	case errors.Is(err, appruntime.ErrBranchActive):
+		s.logger.Info("ignored webhook, branch already active", "ticket", ticket.Ref(), "branch", branch)
+		return nil
+	default:
+		return err
+	}
+}
 
-	return s.run(ctx, fc, ticket, ag, route.Git)
+func (s *Service) RuntimeSnapshot() appruntime.Snapshot {
+	return s.runtime.Snapshot()
+}
+
+func (s *Service) Pause() {
+	s.runtime.Pause()
+}
+
+func (s *Service) Resume() {
+	s.runtime.Resume()
+}
+
+func (s *Service) CancelRun(id string) bool {
+	return s.runtime.CancelRun(id)
 }
 
 func (s *Service) shouldRun(payload forgejo.WebhookPayload, ticket forgejo.Ticket) bool {
