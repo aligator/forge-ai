@@ -328,6 +328,61 @@ func TestPostSuccessPostsCommentWithSessionID(t *testing.T) {
 	}
 }
 
+func TestEnsurePullRequestUsesIssueBaseBranch(t *testing.T) {
+	forge := &recordingForgejo{}
+	svc := New(Options{
+		Config:  config.Config{MaxConcurrent: 1},
+		Forgejo: forge,
+	})
+
+	_, err := svc.ensurePullRequest(context.Background(), forge, forgejo.Ticket{
+		Owner:  "ac",
+		Repo:   "demo",
+		Kind:   "issue",
+		Number: 8,
+		Title:  "Fix it",
+	}, "forge-ai/ac/demo/issue-8", "release/1.2")
+	if err != nil {
+		t.Fatalf("ensurePullRequest() error = %v", err)
+	}
+	if forge.createPullRequest.Base != "release/1.2" {
+		t.Fatalf("CreatePullRequest base = %q, want release/1.2", forge.createPullRequest.Base)
+	}
+}
+
+func TestEnsurePullRequestRetargetsExistingPullRequest(t *testing.T) {
+	forge := &recordingForgejo{
+		openPullRequest: &forgejo.PullRequest{
+			Index: 4,
+			Base:  forgejo.PullRequestBranch{Ref: "main"},
+		},
+	}
+	svc := New(Options{
+		Config:  config.Config{MaxConcurrent: 1},
+		Forgejo: forge,
+	})
+
+	_, err := svc.ensurePullRequest(context.Background(), forge, forgejo.Ticket{
+		Owner:  "ac",
+		Repo:   "demo",
+		Kind:   "issue",
+		Number: 8,
+		Title:  "Fix it",
+	}, "forge-ai/ac/demo/issue-8", "release/1.2")
+	if err != nil {
+		t.Fatalf("ensurePullRequest() error = %v", err)
+	}
+	if forge.updatePullRequestIndex != 4 {
+		t.Fatalf("UpdatePullRequest index = %d, want 4", forge.updatePullRequestIndex)
+	}
+	if forge.updatePullRequest.Base != "release/1.2" {
+		t.Fatalf("UpdatePullRequest base = %q, want release/1.2", forge.updatePullRequest.Base)
+	}
+	if forge.createPullRequest.Head != "" {
+		t.Fatalf("CreatePullRequest called with head %q, want no create", forge.createPullRequest.Head)
+	}
+}
+
 type stubAgent struct {
 	name string
 }
@@ -337,11 +392,15 @@ func (a *stubAgent) Run(_ context.Context, _, _, _ string) (agent.Result, error)
 }
 
 type recordingForgejo struct {
-	commentBody       string
-	reactionCommentID int64
-	reactionContent   string
-	reactionErr       error
-	reviewComments    []string
+	commentBody            string
+	reactionCommentID      int64
+	reactionContent        string
+	reactionErr            error
+	reviewComments         []string
+	openPullRequest        *forgejo.PullRequest
+	createPullRequest      forgejo.CreatePullRequestRequest
+	updatePullRequest      forgejo.UpdatePullRequestRequest
+	updatePullRequestIndex int
 }
 
 func (f *recordingForgejo) GetLatestPullReviewComments(_ context.Context, _, _ string, _ int) ([]forgejo.Comment, error) {
@@ -364,9 +423,16 @@ func (f *recordingForgejo) CreateCommentReaction(_ context.Context, _ string, _ 
 }
 
 func (f *recordingForgejo) FindOpenPullRequest(context.Context, string, string, string) (*forgejo.PullRequest, error) {
+	return f.openPullRequest, nil
+}
+
+func (f *recordingForgejo) CreatePullRequest(_ context.Context, _ string, _ string, request forgejo.CreatePullRequestRequest) (*forgejo.PullRequest, error) {
+	f.createPullRequest = request
 	return nil, nil
 }
 
-func (f *recordingForgejo) CreatePullRequest(context.Context, string, string, forgejo.CreatePullRequestRequest) (*forgejo.PullRequest, error) {
-	return nil, nil
+func (f *recordingForgejo) UpdatePullRequest(_ context.Context, _ string, _ string, index int, request forgejo.UpdatePullRequestRequest) (*forgejo.PullRequest, error) {
+	f.updatePullRequestIndex = index
+	f.updatePullRequest = request
+	return f.openPullRequest, nil
 }
