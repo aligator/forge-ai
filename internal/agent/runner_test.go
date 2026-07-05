@@ -68,6 +68,30 @@ func TestRunnerStreamsRedactedStdoutAndStderr(t *testing.T) {
 	}
 }
 
+func TestRunnerRedactsInheritedEnvForNormalCommand(t *testing.T) {
+	t.Setenv("AGENT_SECRET_TOKEN", "abc123456789")
+	output := &recordingOutputWriter{}
+	runner := NewRunner(config.AgentConfig{
+		Bin:     "sh",
+		Args:    []string{"-c", `printf 'out:%s\n' "$AGENT_SECRET_TOKEN"`},
+		Timeout: 5 * time.Second,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	result, err := runner.RunWithOptions(context.Background(), RunOptions{
+		Workdir: t.TempDir(),
+		Output:  output,
+	})
+	if err != nil {
+		t.Fatalf("RunWithOptions() error = %v", err)
+	}
+	if strings.Contains(result.Output, "abc123456789") || output.contains("abc123456789") {
+		t.Fatalf("output contains inherited secret: result=%q chunks=%+v", result.Output, output.chunks)
+	}
+	if !strings.Contains(result.Output, "out:<redacted>") || !output.has(StreamStdout, "out:<redacted>") {
+		t.Fatalf("output missing redaction: result=%q chunks=%+v", result.Output, output.chunks)
+	}
+}
+
 func TestOutputCollectorKeepsLimitedTail(t *testing.T) {
 	collector := newOutputCollector(5, defaultAdapter{}, "")
 	collector.Write("0123456789")
@@ -88,6 +112,33 @@ func TestBroadcasterDeliversChunksToSubscribers(t *testing.T) {
 	got := <-ch
 	if got.Stream != StreamStdout || got.Chunk != "live\n" {
 		t.Fatalf("subscriber chunk = %+v, want stdout live chunk", got)
+	}
+}
+
+func TestBroadcasterDoesNotBlockOnFullSubscriber(t *testing.T) {
+	broadcaster := NewBroadcaster()
+	ch, unsubscribe := broadcaster.Subscribe(1)
+	defer unsubscribe()
+
+	if err := broadcaster.WriteOutput(OutputChunk{Stream: StreamStdout, Chunk: "first\n"}); err != nil {
+		t.Fatalf("WriteOutput() error = %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- broadcaster.WriteOutput(OutputChunk{Stream: StreamStdout, Chunk: "second\n"})
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("WriteOutput() error = %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		<-ch
+		if err := <-done; err != nil {
+			t.Fatalf("WriteOutput() error = %v", err)
+		}
+		t.Fatal("WriteOutput blocked on a full subscriber")
 	}
 }
 

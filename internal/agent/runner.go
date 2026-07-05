@@ -71,7 +71,7 @@ func (r *Runner) RunWithOptions(ctx context.Context, options RunOptions) (Result
 	adapter := adapterFor(r.cfg)
 	if r.cfg.CommandTemplate != "" {
 		cmd = exec.CommandContext(ctx, "sh", "-c", r.cfg.CommandTemplate)
-		cmd.Env = append(os.Environ(), append(r.cfg.ExtraEnv, "FORGE_AI_PROMPT="+options.Prompt, "FORGE_AI_SESSION_ID="+options.SessionID)...)
+		cmd.Env = effectiveEnv(append(r.cfg.ExtraEnv, "FORGE_AI_PROMPT="+options.Prompt, "FORGE_AI_SESSION_ID="+options.SessionID)...)
 	} else {
 		invocation := adapter.Invocation(r.cfg.Args, options.Prompt, options.SessionID)
 		if invocation.SessionID != "" {
@@ -79,14 +79,14 @@ func (r *Runner) RunWithOptions(ctx context.Context, options RunOptions) (Result
 		}
 		cmd = exec.CommandContext(ctx, r.cfg.Bin, invocation.Args...)
 		if len(r.cfg.ExtraEnv) > 0 {
-			cmd.Env = append(os.Environ(), r.cfg.ExtraEnv...)
+			cmd.Env = effectiveEnv(r.cfg.ExtraEnv...)
 		}
 	}
 	cmd.Dir = options.Workdir
 	cmd.Stdin = options.Stdin // nil explicitly closes stdin; subprocesses that read get immediate EOF
 
 	collector := newOutputCollector(12000, adapter, knownSessionID)
-	redactor := NewRedactor(cmd.Env)
+	redactor := NewRedactor(effectiveCmdEnv(cmd))
 	stdout := newProcessOutputWriter(StreamStdout, os.Stdout, options.Output, collector, redactor.Stream())
 	stderr := newProcessOutputWriter(StreamStderr, os.Stderr, options.Output, collector, redactor.Stream())
 	cmd.Stdout = stdout
@@ -111,6 +111,21 @@ func (r *Runner) RunWithOptions(ctx context.Context, options RunOptions) (Result
 		err = writerErr
 	}
 	return Result{Output: collector.Tail(), SessionID: collector.SessionID()}, err
+}
+
+func effectiveEnv(extra ...string) []string {
+	env := os.Environ()
+	if len(extra) == 0 {
+		return env
+	}
+	return append(env, extra...)
+}
+
+func effectiveCmdEnv(cmd *exec.Cmd) []string {
+	if len(cmd.Env) > 0 {
+		return cmd.Env
+	}
+	return os.Environ()
 }
 
 func appendExecSubcommand(args []string, subcommand, sessionID string) []string {

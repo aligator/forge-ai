@@ -35,7 +35,10 @@ func (b *Broadcaster) WriteOutput(chunk OutputChunk) error {
 	}
 	b.mu.Unlock()
 	for _, subscriber := range subscribers {
-		subscriber <- chunk
+		select {
+		case subscriber <- chunk:
+		default:
+		}
 	}
 	return nil
 }
