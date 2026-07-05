@@ -30,6 +30,10 @@ type Agent interface {
 	Run(context.Context, string, string, string) (agent.Result, error)
 }
 
+type optionsAgent interface {
+	RunWithOptions(context.Context, agent.RunOptions) (agent.Result, error)
+}
+
 type Options struct {
 	Config         config.Config
 	Forgejo        Forgejo

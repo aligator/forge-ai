@@ -20,6 +20,27 @@ func (a *stubAgent) Run(_ context.Context, _, _, _ string) (agent.Result, error)
 	return a.result, a.err
 }
 
+type streamingStubAgent struct {
+	result agent.Result
+	chunks []agent.OutputChunk
+	err    error
+}
+
+func (a *streamingStubAgent) Run(context.Context, string, string, string) (agent.Result, error) {
+	panic("Run should not be called")
+}
+
+func (a *streamingStubAgent) RunWithOptions(_ context.Context, options agent.RunOptions) (agent.Result, error) {
+	for _, chunk := range a.chunks {
+		if options.Output != nil {
+			if err := options.Output.WriteOutput(chunk); err != nil {
+				return agent.Result{}, err
+			}
+		}
+	}
+	return a.result, a.err
+}
+
 type recordingForgejo struct {
 	commentBody            string
 	reactionCommentID      int64

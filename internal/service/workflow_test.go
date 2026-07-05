@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"codeberg.org/forge-ai/internal/agent"
 	"codeberg.org/forge-ai/internal/config"
 	"codeberg.org/forge-ai/internal/forgejo"
 )
@@ -69,6 +70,35 @@ func TestSuccessCommentOmitsAgentOutput(t *testing.T) {
 	got := successComment("work", true, "session-123", "")
 	if strings.Contains(got, "Last agent output:") {
 		t.Fatalf("successComment() includes agent output:\n%s", got)
+	}
+}
+
+func TestRunAgentPersistsStreamingLogChunks(t *testing.T) {
+	store := &recordingRunStore{}
+	runner := &workflowRunner{runStore: store}
+	agent := &streamingStubAgent{
+		chunks: []agent.OutputChunk{
+			{Stream: agent.StreamStdout, Chunk: "out\n"},
+			{Stream: agent.StreamStderr, Chunk: "err\n"},
+		},
+		result: agent.Result{Output: "out\nerr", SessionID: "session-123"},
+	}
+
+	result, err := runner.runAgent(context.Background(), agent, t.TempDir(), "prompt", "", "run-1")
+	if err != nil {
+		t.Fatalf("runAgent() error = %v", err)
+	}
+	if result.SessionID != "session-123" {
+		t.Fatalf("SessionID = %q, want session-123", result.SessionID)
+	}
+	if len(store.logs) != 2 {
+		t.Fatalf("logs = %+v, want two chunks", store.logs)
+	}
+	if store.logs[0].Stream != "stdout" || store.logs[0].Chunk != "out\n" || store.logs[1].Stream != "stderr" || store.logs[1].Chunk != "err\n" {
+		t.Fatalf("logs = %+v, want stdout/stderr chunks", store.logs)
+	}
+	if len(store.runs) > 0 && store.runs[0].SessionID != "session-123" {
+		t.Fatalf("stored session = %q, want session-123", store.runs[0].SessionID)
 	}
 }
 

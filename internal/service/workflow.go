@@ -25,83 +25,134 @@ type workflowRunner struct {
 	logger         *slog.Logger
 }
 
-func (r *workflowRunner) run(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, ag Agent, run runstore.Run, identity config.GitIdentity) error {
-	branch := firstNonEmpty(run.Branch, branchForTicket(r.cfg, ticket))
-	base := branchRef(firstNonEmpty(run.BaseBranch, ticket.BaseBranch, ticket.DefaultBranch, "main"))
+type workflowState struct {
+	ticket    forgejo.Ticket
+	run       runstore.Run
+	branch    string
+	base      string
+	workdir   string
+	result    agent.Result
+	committed bool
+}
 
-	r.logger.Info("starting ticket workflow", "ticket", ticket.Ref(), "repo", ticket.Owner+"/"+ticket.Repo, "branch", branch)
-	r.markRunRunning(ctx, run.ID)
-	if err := postStart(ctx, fc, ticket, branch); err != nil {
+func (r *workflowRunner) run(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, ag Agent, run runstore.Run, identity config.GitIdentity) error {
+	state := workflowState{
+		ticket: ticket,
+		run:    run,
+		branch: firstNonEmpty(run.Branch, branchForTicket(r.cfg, ticket)),
+		base:   branchRef(firstNonEmpty(run.BaseBranch, ticket.BaseBranch, ticket.DefaultBranch, "main")),
+	}
+
+	r.startWorkflow(ctx, fc, state)
+	if err := r.prepareWorkspace(ctx, fc, &state, identity); err != nil {
+		return err
+	}
+	defer r.removeWorkspace(state.workdir)
+	if err := r.executeAgent(ctx, fc, ag, &state); err != nil {
+		return err
+	}
+	if err := r.commitAndPush(ctx, fc, &state); err != nil {
+		return err
+	}
+	prText, err := r.ensurePullRequestText(ctx, fc, state)
+	if err != nil {
+		return err
+	}
+	return r.finishWorkflow(ctx, fc, state, prText)
+}
+
+func (r *workflowRunner) startWorkflow(ctx context.Context, fc Forgejo, state workflowState) {
+	r.logger.Info("starting ticket workflow", "ticket", state.ticket.Ref(), "repo", state.ticket.Owner+"/"+state.ticket.Repo, "branch", state.branch)
+	r.markRunRunning(ctx, state.run.ID)
+	if err := postStart(ctx, fc, state.ticket, state.branch); err != nil {
 		r.logger.Warn("post start comment failed", "error", err)
 	}
+}
 
-	token := r.routeToken(ticket, fc)
-	cloneURL := rewriteCloneURL(ticket.CloneURL, r.cfg.CloneURLBase)
-	workdir, err := r.git.Prepare(ctx, r.cfg.WorkspaceDir, cloneURL, token, ticket.Owner, ticket.Repo, branch, base, identity)
+func (r *workflowRunner) prepareWorkspace(ctx context.Context, fc Forgejo, state *workflowState, identity config.GitIdentity) error {
+	token := r.routeToken(state.ticket, fc)
+	cloneURL := rewriteCloneURL(state.ticket.CloneURL, r.cfg.CloneURLBase)
+	workdir, err := r.git.Prepare(ctx, r.cfg.WorkspaceDir, cloneURL, token, state.ticket.Owner, state.ticket.Repo, state.branch, state.base, identity)
 	if err != nil {
-		r.finishRun(ctx, run.ID, runstore.StatusFailed, err)
-		_ = postFailure(ctx, fc, ticket, err)
+		r.failWorkflow(ctx, fc, *state, err)
 		return err
 	}
-	r.addRunEvent(ctx, run.ID, "workspace_ready", "workspace prepared")
-
-	r.logger.Info("workspace ready", "workdir", workdir, "branch", branch)
-	r.logWorkspaceFiles(workdir, "before agent run")
-	sessionID := sessionIDFromInstruction(ticket.Instruction, r.cfg.Agents)
-	result, agentErr := ag.Run(ctx, workdir, prompt(ticket, branch, base, r.cfg.AgentAllowGit, r.cfg.AgentToolHints), sessionID)
-	r.recordAgentResult(ctx, run.ID, result)
-	r.logWorkspaceFiles(workdir, "after agent run")
-	if agentErr != nil {
-		err := fmt.Errorf("agent failed: %w", agentErr)
-		r.finishRun(ctx, run.ID, runstore.StatusFailed, err)
-		_ = postFailureWithOutput(ctx, fc, ticket, err, result.Output, result.SessionID)
-		return err
-	}
-	r.addRunEvent(ctx, run.ID, "agent_finished", "agent completed")
-
-	commitMsg := readAndRemoveCommitMsg(workdir)
-	if commitMsg == "" {
-		commitMsg = fmt.Sprintf("forge-ai: work on %s #%d", ticket.Kind, ticket.Number)
-	}
-	committed, err := r.git.CommitIfDirty(ctx, workdir, commitMsg)
-	if err != nil {
-		r.finishRun(ctx, run.ID, runstore.StatusFailed, err)
-		_ = postFailureWithOutput(ctx, fc, ticket, err, result.Output, result.SessionID)
-		return err
-	}
-	r.addRunEvent(ctx, run.ID, "commit_checked", fmt.Sprintf("committed=%t", committed))
-
-	if err := r.git.Push(ctx, workdir, branch); err != nil {
-		r.finishRun(ctx, run.ID, runstore.StatusFailed, err)
-		_ = postFailureWithOutput(ctx, fc, ticket, err, result.Output, result.SessionID)
-		return err
-	}
-	r.addRunEvent(ctx, run.ID, "pushed", "branch pushed")
-	defer r.removeWorkspace(workdir)
-
-	prText := ""
-	if r.cfg.CreatePR && ticket.Kind == "issue" {
-		pull, err := ensurePullRequest(ctx, fc, ticket, branch, base)
-		if err != nil {
-			r.finishRun(ctx, run.ID, runstore.StatusFailed, err)
-			_ = postFailureWithOutput(ctx, fc, ticket, err, result.Output, result.SessionID)
-			return err
-		}
-		if pull != nil {
-			prText = fmt.Sprintf("\n\nPull request: %s", firstNonEmpty(pull.HTMLURL, fmt.Sprintf("#%d", pull.NumberValue())))
-			r.addRunLink(ctx, run.ID, "pull_request", pull.HTMLURL, fmt.Sprintf("PR #%d", pull.NumberValue()))
-		}
-	}
-
-	comment := successComment(branch, committed, result.SessionID, prText)
-	if err := postSuccess(ctx, fc, ticket, comment); err != nil {
-		r.finishRun(ctx, run.ID, runstore.StatusFailed, err)
-		return err
-	}
-
-	r.finishRun(ctx, run.ID, runstore.StatusSuccess, nil)
-	r.logger.Info("ticket workflow completed", "ticket", ticket.Ref(), "branch", branch, "committed", committed)
+	state.workdir = workdir
+	r.addRunEvent(ctx, state.run.ID, "workspace_ready", "workspace prepared")
+	r.logger.Info("workspace ready", "workdir", workdir, "branch", state.branch)
 	return nil
+}
+
+func (r *workflowRunner) executeAgent(ctx context.Context, fc Forgejo, ag Agent, state *workflowState) error {
+	r.logWorkspaceFiles(state.workdir, "before agent run")
+	sessionID := sessionIDFromInstruction(state.ticket.Instruction, r.cfg.Agents)
+	result, err := r.runAgent(ctx, ag, state.workdir, prompt(state.ticket, state.branch, state.base, r.cfg.AgentAllowGit, r.cfg.AgentToolHints), sessionID, state.run.ID)
+	state.result = result
+	r.logWorkspaceFiles(state.workdir, "after agent run")
+	if err != nil {
+		err = fmt.Errorf("agent failed: %w", err)
+		r.failWorkflow(ctx, fc, *state, err)
+		return err
+	}
+	r.addRunEvent(ctx, state.run.ID, "agent_finished", "agent completed")
+	return nil
+}
+
+func (r *workflowRunner) commitAndPush(ctx context.Context, fc Forgejo, state *workflowState) error {
+	commitMsg := readAndRemoveCommitMsg(state.workdir)
+	if commitMsg == "" {
+		commitMsg = fmt.Sprintf("forge-ai: work on %s #%d", state.ticket.Kind, state.ticket.Number)
+	}
+	committed, err := r.git.CommitIfDirty(ctx, state.workdir, commitMsg)
+	if err != nil {
+		r.failWorkflow(ctx, fc, *state, err)
+		return err
+	}
+	state.committed = committed
+	r.addRunEvent(ctx, state.run.ID, "commit_checked", fmt.Sprintf("committed=%t", committed))
+
+	if err := r.git.Push(ctx, state.workdir, state.branch); err != nil {
+		r.failWorkflow(ctx, fc, *state, err)
+		return err
+	}
+	r.addRunEvent(ctx, state.run.ID, "pushed", "branch pushed")
+	return nil
+}
+
+func (r *workflowRunner) ensurePullRequestText(ctx context.Context, fc Forgejo, state workflowState) (string, error) {
+	if !r.cfg.CreatePR || state.ticket.Kind != "issue" {
+		return "", nil
+	}
+	pull, err := ensurePullRequest(ctx, fc, state.ticket, state.branch, state.base)
+	if err != nil {
+		r.failWorkflow(ctx, fc, state, err)
+		return "", err
+	}
+	if pull == nil {
+		return "", nil
+	}
+	r.addRunLink(ctx, state.run.ID, "pull_request", pull.HTMLURL, fmt.Sprintf("PR #%d", pull.NumberValue()))
+	return fmt.Sprintf("\n\nPull request: %s", firstNonEmpty(pull.HTMLURL, fmt.Sprintf("#%d", pull.NumberValue()))), nil
+}
+
+func (r *workflowRunner) finishWorkflow(ctx context.Context, fc Forgejo, state workflowState, prText string) error {
+	comment := successComment(state.branch, state.committed, state.result.SessionID, prText)
+	if err := postSuccess(ctx, fc, state.ticket, comment); err != nil {
+		r.finishRun(ctx, state.run.ID, runstore.StatusFailed, err)
+		return err
+	}
+	r.finishRun(ctx, state.run.ID, runstore.StatusSuccess, nil)
+	r.logger.Info("ticket workflow completed", "ticket", state.ticket.Ref(), "branch", state.branch, "committed", state.committed)
+	return nil
+}
+
+func (r *workflowRunner) failWorkflow(ctx context.Context, fc Forgejo, state workflowState, err error) {
+	r.finishRun(ctx, state.run.ID, runstore.StatusFailed, err)
+	if state.result.Output != "" || state.result.SessionID != "" {
+		_ = postFailureWithOutput(ctx, fc, state.ticket, err, state.result.Output, state.result.SessionID)
+		return
+	}
+	_ = postFailure(ctx, fc, state.ticket, err)
 }
 
 func (r *workflowRunner) createRun(ctx context.Context, payload forgejo.WebhookPayload, ticket forgejo.Ticket, mention, branch, base string) (runstore.Run, error) {
@@ -141,6 +192,22 @@ func (r *workflowRunner) createRun(ctx context.Context, payload forgejo.WebhookP
 	return run, nil
 }
 
+func (r *workflowRunner) runAgent(ctx context.Context, ag Agent, workdir, prompt, sessionID, runID string) (agent.Result, error) {
+	if streaming, ok := ag.(optionsAgent); ok {
+		result, err := streaming.RunWithOptions(ctx, agent.RunOptions{
+			Workdir:   workdir,
+			Prompt:    prompt,
+			SessionID: sessionID,
+			Output:    runLogWriter{store: r.runStore, runID: runID, logger: r.logger},
+		})
+		r.recordAgentSession(ctx, runID, result.SessionID)
+		return result, err
+	}
+	result, err := ag.Run(ctx, workdir, prompt, sessionID)
+	r.recordAgentResult(ctx, runID, result)
+	return result, err
+}
+
 func (r *workflowRunner) markRunRunning(ctx context.Context, runID string) {
 	if r.runStore == nil || runID == "" {
 		return
@@ -165,25 +232,59 @@ func (r *workflowRunner) finishRun(ctx context.Context, runID string, status run
 	r.addRunEvent(ctx, runID, string(status), message)
 }
 
+// recordAgentResult is used by the legacy (non-streaming) agent path. It writes
+// the full tail output as a single "combined" log chunk. The streaming path uses
+// recordAgentSession only — per-chunk stdout/stderr are written by runLogWriter
+// during execution, so no combined chunk is produced for streaming agents.
 func (r *workflowRunner) recordAgentResult(ctx context.Context, runID string, result agent.Result) {
+	r.recordAgentSession(ctx, runID, result.SessionID)
+	if r.runStore == nil || runID == "" || result.Output == "" {
+		return
+	}
+	if err := r.runStore.AddLogChunk(ctx, runstore.LogChunkInput{
+		RunID:  runID,
+		Time:   timeNow(),
+		Stream: "combined",
+		Chunk:  result.Output,
+	}); err != nil {
+		r.logger.Warn("record run log failed", "run_id", runID, "error", err)
+	}
+}
+
+func (r *workflowRunner) recordAgentSession(ctx context.Context, runID, sessionID string) {
 	if r.runStore == nil || runID == "" {
 		return
 	}
-	if strings.TrimSpace(result.SessionID) != "" {
-		if err := r.runStore.SetSessionID(ctx, runID, result.SessionID); err != nil {
+	if strings.TrimSpace(sessionID) != "" {
+		if err := r.runStore.SetSessionID(ctx, runID, sessionID); err != nil {
 			r.logger.Warn("record run session failed", "run_id", runID, "error", err)
 		}
 	}
-	if result.Output != "" {
-		if err := r.runStore.AddLogChunk(ctx, runstore.LogChunkInput{
-			RunID:  runID,
-			Time:   timeNow(),
-			Stream: "combined",
-			Chunk:  result.Output,
-		}); err != nil {
-			r.logger.Warn("record run log failed", "run_id", runID, "error", err)
-		}
+}
+
+type runLogWriter struct {
+	store  runstore.RunStore
+	runID  string
+	logger *slog.Logger
+}
+
+func (w runLogWriter) WriteOutput(chunk agent.OutputChunk) error {
+	if w.store == nil || w.runID == "" || chunk.Chunk == "" {
+		return nil
 	}
+	if chunk.Time.IsZero() {
+		chunk.Time = timeNow()
+	}
+	err := w.store.AddLogChunk(context.Background(), runstore.LogChunkInput{
+		RunID:  w.runID,
+		Time:   chunk.Time,
+		Stream: string(chunk.Stream),
+		Chunk:  chunk.Chunk,
+	})
+	if err != nil && w.logger != nil {
+		w.logger.Warn("record run log failed", "run_id", w.runID, "stream", chunk.Stream, "error", err)
+	}
+	return err
 }
 
 func (r *workflowRunner) addRunEvent(ctx context.Context, runID, eventType, message string) {
