@@ -15,6 +15,7 @@ import (
 	"codeberg.org/forge-ai/internal/config"
 	"codeberg.org/forge-ai/internal/forgejo"
 	"codeberg.org/forge-ai/internal/gitops"
+	"codeberg.org/forge-ai/internal/runstore"
 	"codeberg.org/forge-ai/internal/server"
 	"codeberg.org/forge-ai/internal/service"
 )
@@ -41,6 +42,18 @@ func main() {
 		cfg.ForgejoToken = token
 		logger.Info("generated forgejo dev token", "user", cfg.ForgejoBootstrapUser)
 	}
+
+	store, err := runstore.OpenSQLite(context.Background(), cfg.RunStorePath)
+	if err != nil {
+		logger.Error("open runstore", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			logger.Warn("close runstore", "error", err)
+		}
+	}()
+	logger.Info("runstore ready", "path", cfg.RunStorePath)
 
 	agents := make(map[string]service.Agent)
 	forgejoClients := make(map[string]service.Forgejo)
@@ -82,6 +95,7 @@ func main() {
 		ForgejoClients: forgejoClients,
 		Git:            gitops.New(cfg.Git, logger),
 		Agents:         agents,
+		RunStore:       store,
 		Logger:         logger,
 	})
 

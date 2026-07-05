@@ -33,6 +33,7 @@ type Config struct {
 	Agents                  []AgentRoute
 	AgentToolHints          string
 	WorkspaceDir            string
+	RunStorePath            string
 	BranchPrefix            string
 	CreatePR                bool
 	MaxConcurrent           int
@@ -75,6 +76,7 @@ func Load() (Config, error) {
 			UserEmail: env("GIT_USER_EMAIL", "forge-ai@example.invalid"),
 		},
 	}
+	workspaceDir := env("WORKSPACE_DIR", ".forge-ai/workspaces")
 
 	cfg := Config{
 		HTTPAddr:                env("HTTP_ADDR", ":8080"),
@@ -88,7 +90,8 @@ func Load() (Config, error) {
 		WebhookSecret:           os.Getenv("WEBHOOK_SECRET"),
 		Agents:                  loadAgentRoutes(gitCfg.GitIdentity),
 		AgentToolHints:          strings.ReplaceAll(os.Getenv("AGENT_TOOL_HINTS"), `\n`, "\n"),
-		WorkspaceDir:            env("WORKSPACE_DIR", ".forge-ai/workspaces"),
+		WorkspaceDir:            workspaceDir,
+		RunStorePath:            env("RUNSTORE_PATH", workspaceDir+"/runstore.sqlite"),
 		BranchPrefix:            env("BRANCH_PREFIX", "forge-ai"),
 		CreatePR:                envBool("CREATE_PR", true),
 		MaxConcurrent:           envInt("MAX_CONCURRENT", 1),

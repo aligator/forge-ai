@@ -9,11 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"codeberg.org/forge-ai/internal/agent"
 	"codeberg.org/forge-ai/internal/config"
 	"codeberg.org/forge-ai/internal/forgejo"
 	"codeberg.org/forge-ai/internal/gitops"
+	"codeberg.org/forge-ai/internal/runstore"
 	appruntime "codeberg.org/forge-ai/internal/runtime"
 )
 
@@ -43,6 +45,7 @@ type Options struct {
 	Git            Git
 	Agents         map[string]Agent // mention (lowercase) → runner
 	Runtime        *appruntime.Runtime
+	RunStore       runstore.RunStore
 	Logger         *slog.Logger
 }
 
@@ -53,6 +56,7 @@ type Service struct {
 	git            Git
 	agents         map[string]Agent
 	runtime        *appruntime.Runtime
+	runStore       runstore.RunStore
 	logger         *slog.Logger
 }
 
@@ -68,6 +72,7 @@ func New(options Options) *Service {
 		git:            options.Git,
 		agents:         options.Agents,
 		runtime:        rt,
+		runStore:       options.RunStore,
 		logger:         options.Logger,
 	}
 }
@@ -141,6 +146,7 @@ func (s *Service) Handle(ctx context.Context, event string, payload forgejo.Webh
 	fc := s.forgejoFor(mention)
 	route := s.routeForMention(mention)
 	branch := branchForTicket(s.cfg, ticket)
+	base := firstNonEmpty(ticket.BaseBranch, ticket.DefaultBranch, "main")
 	spec := appruntime.RunSpec{
 		TicketRef: ticket.Ref(),
 		Branch:    branch,
@@ -151,10 +157,14 @@ func (s *Service) Handle(ctx context.Context, event string, payload forgejo.Webh
 	}
 
 	err := s.runtime.SubmitWebhookRun(ctx, spec, func(runCtx context.Context) error {
+		run, err := s.createRun(runCtx, payload, ticket, mention, branch, base)
+		if err != nil {
+			return err
+		}
 		if err := s.postStartAckWith(runCtx, fc, ticket); err != nil {
 			s.logger.Warn("post start acknowledgement failed", "comment_id", ticket.CommentID, "error", err)
 		}
-		return s.run(runCtx, fc, ticket, ag, route.Git)
+		return s.run(runCtx, fc, ticket, ag, run, route.Git)
 	})
 	switch {
 	case errors.Is(err, appruntime.ErrTicketActive):
@@ -240,11 +250,12 @@ func (s *Service) routeForMention(mention string) config.AgentRoute {
 	return config.AgentRoute{Git: s.cfg.Git.GitIdentity}
 }
 
-func (s *Service) run(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, ag Agent, identity config.GitIdentity) error {
-	branch := branchForTicket(s.cfg, ticket)
-	base := firstNonEmpty(ticket.BaseBranch, ticket.DefaultBranch, "main")
+func (s *Service) run(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, ag Agent, run runstore.Run, identity config.GitIdentity) error {
+	branch := firstNonEmpty(run.Branch, branchForTicket(s.cfg, ticket))
+	base := firstNonEmpty(run.BaseBranch, ticket.BaseBranch, ticket.DefaultBranch, "main")
 
 	s.logger.Info("starting ticket workflow", "ticket", ticket.Ref(), "repo", ticket.Owner+"/"+ticket.Repo, "branch", branch)
+	s.markRunRunning(ctx, run.ID)
 	if err := s.postStart(ctx, fc, ticket, branch); err != nil {
 		s.logger.Warn("post start comment failed", "error", err)
 	}
@@ -253,20 +264,25 @@ func (s *Service) run(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, ag
 	cloneURL := rewriteCloneURL(ticket.CloneURL, s.cfg.CloneURLBase)
 	workdir, err := s.git.Prepare(ctx, s.cfg.WorkspaceDir, cloneURL, token, ticket.Owner, ticket.Repo, branch, base, identity)
 	if err != nil {
+		s.finishRun(ctx, run.ID, runstore.StatusFailed, err)
 		_ = s.postFailure(ctx, fc, ticket, err)
 		return err
 	}
+	s.addRunEvent(ctx, run.ID, "workspace_ready", "workspace prepared")
 
 	s.logger.Info("workspace ready", "workdir", workdir, "branch", branch)
 	s.logWorkspaceFiles(workdir, "before agent run")
 	sessionID := sessionIDFromInstruction(ticket.Instruction, s.cfg.Agents)
 	result, agentErr := ag.Run(ctx, workdir, prompt(ticket, branch, base, s.cfg.AgentAllowGit, s.cfg.AgentToolHints), sessionID)
+	s.recordAgentResult(ctx, run.ID, result)
 	s.logWorkspaceFiles(workdir, "after agent run")
 	if agentErr != nil {
 		err := fmt.Errorf("agent failed: %w", agentErr)
+		s.finishRun(ctx, run.ID, runstore.StatusFailed, err)
 		_ = s.postFailureWithOutput(ctx, fc, ticket, err, result.Output, result.SessionID)
 		return err
 	}
+	s.addRunEvent(ctx, run.ID, "agent_finished", "agent completed")
 
 	commitMsg := readAndRemoveCommitMsg(workdir)
 	if commitMsg == "" {
@@ -274,35 +290,157 @@ func (s *Service) run(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, ag
 	}
 	committed, err := s.git.CommitIfDirty(ctx, workdir, commitMsg)
 	if err != nil {
+		s.finishRun(ctx, run.ID, runstore.StatusFailed, err)
 		_ = s.postFailureWithOutput(ctx, fc, ticket, err, result.Output, result.SessionID)
 		return err
 	}
+	s.addRunEvent(ctx, run.ID, "commit_checked", fmt.Sprintf("committed=%t", committed))
 
 	if err := s.git.Push(ctx, workdir, branch); err != nil {
+		s.finishRun(ctx, run.ID, runstore.StatusFailed, err)
 		_ = s.postFailureWithOutput(ctx, fc, ticket, err, result.Output, result.SessionID)
 		return err
 	}
+	s.addRunEvent(ctx, run.ID, "pushed", "branch pushed")
 	defer s.removeWorkspace(workdir)
 
 	prText := ""
 	if s.cfg.CreatePR && ticket.Kind == "issue" {
 		pull, err := s.ensurePullRequest(ctx, fc, ticket, branch, base)
 		if err != nil {
+			s.finishRun(ctx, run.ID, runstore.StatusFailed, err)
 			_ = s.postFailureWithOutput(ctx, fc, ticket, err, result.Output, result.SessionID)
 			return err
 		}
 		if pull != nil {
 			prText = fmt.Sprintf("\n\nPull request: %s", firstNonEmpty(pull.HTMLURL, fmt.Sprintf("#%d", pull.NumberValue())))
+			s.addRunLink(ctx, run.ID, "pull_request", pull.HTMLURL, fmt.Sprintf("PR #%d", pull.NumberValue()))
 		}
 	}
 
 	comment := successComment(branch, committed, result.SessionID, prText)
 	if err := s.postSuccess(ctx, fc, ticket, comment); err != nil {
+		s.finishRun(ctx, run.ID, runstore.StatusFailed, err)
 		return err
 	}
 
+	s.finishRun(ctx, run.ID, runstore.StatusSuccess, nil)
 	s.logger.Info("ticket workflow completed", "ticket", ticket.Ref(), "branch", branch, "committed", committed)
 	return nil
+}
+
+func (s *Service) createRun(ctx context.Context, payload forgejo.WebhookPayload, ticket forgejo.Ticket, mention, branch, base string) (runstore.Run, error) {
+	if s.runStore == nil {
+		return runstore.Run{Branch: branch, BaseBranch: base}, nil
+	}
+	agentType := ""
+	for _, route := range s.cfg.Agents {
+		if strings.EqualFold(route.Mention, mention) {
+			agentType = route.Agent.Type
+			break
+		}
+	}
+	createdBy := ""
+	if payload.Sender != nil {
+		createdBy = payload.Sender.Handle()
+	}
+	run, err := s.runStore.CreateRun(ctx, runstore.CreateRunInput{
+		Kind:         runstore.RunKindWebhookRun,
+		Status:       runstore.StatusQueued,
+		Owner:        ticket.Owner,
+		Repo:         ticket.Repo,
+		TicketKind:   ticket.Kind,
+		TicketNumber: ticket.Number,
+		Branch:       branch,
+		BaseBranch:   base,
+		AgentMention: mention,
+		AgentType:    agentType,
+		StartedAt:    timeNow(),
+		CreatedBy:    createdBy,
+	})
+	if err != nil {
+		return runstore.Run{}, err
+	}
+	s.addRunEvent(ctx, run.ID, "queued", "webhook accepted")
+	s.addRunLink(ctx, run.ID, "ticket", ticket.HTMLURL, ticket.Ref())
+	return run, nil
+}
+
+func (s *Service) markRunRunning(ctx context.Context, runID string) {
+	if s.runStore == nil || runID == "" {
+		return
+	}
+	if err := s.runStore.UpdateRunStatus(ctx, runID, runstore.StatusRunning, time.Time{}, ""); err != nil {
+		s.logger.Warn("record run status failed", "run_id", runID, "status", runstore.StatusRunning, "error", err)
+	}
+	s.addRunEvent(ctx, runID, "running", "workflow started")
+}
+
+func (s *Service) finishRun(ctx context.Context, runID string, status runstore.Status, runErr error) {
+	if s.runStore == nil || runID == "" {
+		return
+	}
+	message := ""
+	if runErr != nil {
+		message = runErr.Error()
+	}
+	if err := s.runStore.UpdateRunStatus(ctx, runID, status, timeNow(), message); err != nil {
+		s.logger.Warn("record run status failed", "run_id", runID, "status", status, "error", err)
+	}
+	s.addRunEvent(ctx, runID, string(status), message)
+}
+
+func (s *Service) recordAgentResult(ctx context.Context, runID string, result agent.Result) {
+	if s.runStore == nil || runID == "" {
+		return
+	}
+	if strings.TrimSpace(result.SessionID) != "" {
+		if err := s.runStore.SetSessionID(ctx, runID, result.SessionID); err != nil {
+			s.logger.Warn("record run session failed", "run_id", runID, "error", err)
+		}
+	}
+	if result.Output != "" {
+		if err := s.runStore.AddLogChunk(ctx, runstore.LogChunkInput{
+			RunID:  runID,
+			Time:   timeNow(),
+			Stream: "combined",
+			Chunk:  result.Output,
+		}); err != nil {
+			s.logger.Warn("record run log failed", "run_id", runID, "error", err)
+		}
+	}
+}
+
+func (s *Service) addRunEvent(ctx context.Context, runID, eventType, message string) {
+	if s.runStore == nil || runID == "" {
+		return
+	}
+	if err := s.runStore.AddEvent(ctx, runstore.EventInput{
+		RunID:   runID,
+		Time:    timeNow(),
+		Type:    eventType,
+		Message: message,
+	}); err != nil {
+		s.logger.Warn("record run event failed", "run_id", runID, "type", eventType, "error", err)
+	}
+}
+
+func (s *Service) addRunLink(ctx context.Context, runID, linkType, url, label string) {
+	if s.runStore == nil || runID == "" || strings.TrimSpace(url) == "" {
+		return
+	}
+	if err := s.runStore.AddLink(ctx, runstore.LinkInput{
+		RunID: runID,
+		Type:  linkType,
+		URL:   url,
+		Label: label,
+	}); err != nil {
+		s.logger.Warn("record run link failed", "run_id", runID, "type", linkType, "error", err)
+	}
+}
+
+var timeNow = func() time.Time {
+	return time.Now().UTC()
 }
 
 func (s *Service) removeWorkspace(workdir string) {
