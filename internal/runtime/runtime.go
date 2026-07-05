@@ -290,7 +290,11 @@ func (r *Runtime) finish(id string, status Status, err error) {
 	}
 	state.Status = status
 	state.FinishedAt = time.Now()
+	ticketRef := state.TicketRef
+	branch := state.Branch
 	r.releaseLocked(state)
+	delete(r.runs, id)
+	r.removeBlockedLocked(ticketRef, branch)
 	r.cond.Broadcast()
 }
 
@@ -300,6 +304,21 @@ func (r *Runtime) releaseLocked(state *runState) {
 	}
 	if state.Branch != "" && r.activeBranches[state.Branch] == state.ID {
 		delete(r.activeBranches, state.Branch)
+	}
+}
+
+func (r *Runtime) removeBlockedLocked(ticketRef, branch string) {
+	for id, state := range r.runs {
+		if state.Status != StatusBlocked {
+			continue
+		}
+		if ticketRef != "" && state.TicketRef == ticketRef && state.BlockReason == BlockReasonTicketActive {
+			delete(r.runs, id)
+			continue
+		}
+		if branch != "" && state.Branch == branch && state.BlockReason == BlockReasonBranchActive {
+			delete(r.runs, id)
+		}
 	}
 }
 

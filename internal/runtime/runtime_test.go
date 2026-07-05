@@ -93,6 +93,27 @@ func TestSubmitWebhookRunBlocksDuplicateTicketAndBranch(t *testing.T) {
 	if err := <-errs; err != nil {
 		t.Fatalf("first run error = %v", err)
 	}
+
+	snap = rt.Snapshot()
+	if len(snap.BlockedRuns) != 0 {
+		t.Fatalf("blocked runs after conflict resolved = %d, want 0", len(snap.BlockedRuns))
+	}
+}
+
+func TestSubmitWebhookRunRemovesTerminalRuns(t *testing.T) {
+	rt := New(1)
+
+	if err := rt.SubmitWebhookRun(context.Background(), RunSpec{TicketRef: "issue-1", Branch: "branch-1"}, func(context.Context) error {
+		return nil
+	}); err != nil {
+		t.Fatalf("SubmitWebhookRun() error = %v", err)
+	}
+
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if len(rt.runs) != 0 {
+		t.Fatalf("retained runs = %d, want 0", len(rt.runs))
+	}
 }
 
 func TestPauseResumeKeepsNewRunsPending(t *testing.T) {
