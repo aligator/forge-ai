@@ -15,3 +15,19 @@ func TestSlugFallback(t *testing.T) {
 		t.Fatalf("Slug() = %q, want item", got)
 	}
 }
+
+func TestBranchRefNameStripsHeadsRef(t *testing.T) {
+	got := BranchRefName("refs/heads/feature/dashboard")
+	want := "feature/dashboard"
+	if got != want {
+		t.Fatalf("BranchRefName() = %q, want %q", got, want)
+	}
+}
+
+func TestBranchRefNameStripsRemotePrefix(t *testing.T) {
+	got := BranchRefName("origin/feature/dashboard")
+	want := "feature/dashboard"
+	if got != want {
+		t.Fatalf("BranchRefName() = %q, want %q", got, want)
+	}
+}

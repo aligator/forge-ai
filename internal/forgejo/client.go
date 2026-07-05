@@ -145,7 +145,6 @@ func (c *Client) GetLatestPullReviewComments(ctx context.Context, owner, repo st
 func (c *Client) FindOpenPullRequest(ctx context.Context, owner, repo, head string) (*PullRequest, error) {
 	values := url.Values{}
 	values.Set("state", "open")
-	values.Set("head", owner+":"+head)
 
 	body, err := c.do(ctx, http.MethodGet, apiPath("repos", owner, repo, "pulls"), values, nil)
 	if err != nil {
@@ -156,14 +155,30 @@ func (c *Client) FindOpenPullRequest(ctx context.Context, owner, repo, head stri
 	if err := json.Unmarshal(body, &pulls); err != nil {
 		return nil, err
 	}
-	if len(pulls) == 0 {
-		return nil, nil
+	for _, pull := range pulls {
+		headOwner := pull.Head.Repo.Owner.Handle()
+		if pull.Head.Ref == head && (headOwner == "" || headOwner == owner) {
+			return &pull, nil
+		}
 	}
-	return &pulls[0], nil
+	return nil, nil
 }
 
 func (c *Client) CreatePullRequest(ctx context.Context, owner, repo string, request CreatePullRequestRequest) (*PullRequest, error) {
 	body, err := c.do(ctx, http.MethodPost, apiPath("repos", owner, repo, "pulls"), nil, request)
+	if err != nil {
+		return nil, err
+	}
+
+	var pull PullRequest
+	if err := json.Unmarshal(body, &pull); err != nil {
+		return nil, err
+	}
+	return &pull, nil
+}
+
+func (c *Client) UpdatePullRequest(ctx context.Context, owner, repo string, index int, request UpdatePullRequestRequest) (*PullRequest, error) {
+	body, err := c.do(ctx, http.MethodPatch, apiPath("repos", owner, repo, "pulls", fmt.Sprint(index)), nil, request)
 	if err != nil {
 		return nil, err
 	}

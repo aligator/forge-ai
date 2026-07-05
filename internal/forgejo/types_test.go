@@ -12,6 +12,7 @@ func TestTicketFromIssuePayload(t *testing.T) {
 		},
 		Issue: &Issue{
 			Index:  42,
+			Ref:    "release/1.2",
 			Title:  "Fix it",
 			Labels: []Label{{Name: "ai"}},
 		},
@@ -27,6 +28,9 @@ func TestTicketFromIssuePayload(t *testing.T) {
 	}
 	if ticket.CommentID != 123 {
 		t.Fatalf("CommentID = %d, want 123", ticket.CommentID)
+	}
+	if ticket.BaseBranch != "release/1.2" {
+		t.Fatalf("BaseBranch = %q, want release/1.2", ticket.BaseBranch)
 	}
 }
 

@@ -16,6 +16,7 @@ type AgentRoute struct {
 	User     string // Forgejo username this agent posts as; empty = global bootstrap user
 	Password string // Forgejo password for auto-generating token at startup; empty = skip
 	Token    string // Forgejo token for this agent; empty = global token
+	Git      GitIdentity
 	Agent    AgentConfig
 }
 
@@ -51,8 +52,12 @@ type AgentConfig struct {
 
 type GitConfig struct {
 	RemoteName string
-	UserName   string
-	UserEmail  string
+	GitIdentity
+}
+
+type GitIdentity struct {
+	UserName  string
+	UserEmail string
 }
 
 func Load() (Config, error) {
@@ -64,7 +69,15 @@ func Load() (Config, error) {
 	}
 	agentAllowGit := envBool("AGENT_ALLOW_GIT", false)
 
+	gitCfg := GitConfig{
+		RemoteName: env("GIT_REMOTE", "origin"),
+		GitIdentity: GitIdentity{
+			UserName:  env("GIT_USER_NAME", "forge-ai"),
+			UserEmail: env("GIT_USER_EMAIL", "forge-ai@example.invalid"),
+		},
+	}
 	workspaceDir := env("WORKSPACE_DIR", ".forge-ai/workspaces")
+
 	cfg := Config{
 		HTTPAddr:                env("HTTP_ADDR", ":8080"),
 		ForgejoURL:              strings.TrimRight(env("FORGEJO_URL", "http://localhost:3000"), "/"),
@@ -75,7 +88,7 @@ func Load() (Config, error) {
 		ForgejoBootstrapEnabled: envBool("FORGEJO_BOOTSTRAP_TOKEN", true),
 		CloneURLBase:            strings.TrimRight(env("CLONE_URL_BASE", "http://localhost:3000"), "/"),
 		WebhookSecret:           os.Getenv("WEBHOOK_SECRET"),
-		Agents:                  loadAgentRoutes(),
+		Agents:                  loadAgentRoutes(gitCfg.GitIdentity),
 		AgentToolHints:          strings.ReplaceAll(os.Getenv("AGENT_TOOL_HINTS"), `\n`, "\n"),
 		WorkspaceDir:            workspaceDir,
 		RunStorePath:            env("RUNSTORE_PATH", workspaceDir+"/runstore.sqlite"),
@@ -83,11 +96,7 @@ func Load() (Config, error) {
 		CreatePR:                envBool("CREATE_PR", true),
 		MaxConcurrent:           envInt("MAX_CONCURRENT", 1),
 		AgentAllowGit:           agentAllowGit,
-		Git: GitConfig{
-			RemoteName: env("GIT_REMOTE", "origin"),
-			UserName:   env("GIT_USER_NAME", "forge-ai"),
-			UserEmail:  env("GIT_USER_EMAIL", "forge-ai@example.invalid"),
-		},
+		Git:                     gitCfg,
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -97,8 +106,8 @@ func Load() (Config, error) {
 }
 
 // loadAgentRoutes loads agent routes from numbered env vars (AGENT_0_USER, AGENT_0_BIN, ...).
-// The mention is derived as "@"+user. Falls back to legacy TRIGGER_MENTION + AGENT_BIN/AGENT_COMMAND if no numbered routes found.
-func loadAgentRoutes() []AgentRoute {
+// The mention is derived as "@" + user.
+func loadAgentRoutes(defaultGit GitIdentity) []AgentRoute {
 	var routes []AgentRoute
 	for i := 0; ; i++ {
 		prefix := fmt.Sprintf("AGENT_%d_", i)
@@ -119,6 +128,10 @@ func loadAgentRoutes() []AgentRoute {
 			User:     user,
 			Password: os.Getenv(prefix + "PASSWORD"),
 			Token:    token,
+			Git: GitIdentity{
+				UserName:  env(prefix+"GIT_USER_NAME", defaultGit.UserName),
+				UserEmail: env(prefix+"GIT_USER_EMAIL", defaultGit.UserEmail),
+			},
 			Agent: AgentConfig{
 				Type:            os.Getenv(prefix + "TYPE"),
 				Bin:             os.Getenv(prefix + "BIN"),
@@ -131,17 +144,7 @@ func loadAgentRoutes() []AgentRoute {
 	if len(routes) > 0 {
 		return routes
 	}
-	// Backward compat: single route from legacy vars
-	return []AgentRoute{{
-		Mention: env("TRIGGER_MENTION", "@forge-ai"),
-		Agent: AgentConfig{
-			Type:            os.Getenv("AGENT_TYPE"),
-			Bin:             os.Getenv("AGENT_BIN"),
-			Args:            fields(os.Getenv("AGENT_ARGS")),
-			CommandTemplate: os.Getenv("AGENT_COMMAND"),
-			Timeout:         envDuration("AGENT_TIMEOUT", 30*time.Minute),
-		},
-	}}
+	return nil
 }
 
 func (c Config) validate() error {
@@ -159,7 +162,7 @@ func (c Config) validate() error {
 		return errors.New("MAX_CONCURRENT must be positive")
 	}
 	if len(c.Agents) == 0 {
-		missing = append(missing, "AGENT_0_USER or TRIGGER_MENTION")
+		missing = append(missing, "AGENT_0_USER")
 	}
 	for i, route := range c.Agents {
 		if route.User == "" && route.Mention == "" {
