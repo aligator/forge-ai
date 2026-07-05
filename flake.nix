@@ -40,11 +40,15 @@
               set -eu
               export NPM_CONFIG_PREFIX="''${FORGE_AI_NPM_PREFIX:-$PWD/.nix-npm}"
               mkdir -p "$NPM_CONFIG_PREFIX"
-              npm install -g \
+              npm install -g --min-release-age=7 \
                 @openai/codex \
                 @anthropic-ai/claude-code \
                 opencode-ai \
                 @playwright/mcp
+              claude plugin marketplace add JuliusBrussee/caveman
+              claude plugin install caveman@caveman
+              npx --yes --min-release-age=7 skills add JuliusBrussee/caveman -a codex
+              npx --yes --min-release-age=7 skills add JuliusBrussee/caveman -a opencode
             '';
           };
         in
@@ -80,6 +84,7 @@
             export AGENT_TOOL_HINTS='- rtk is available on this host when installed. Prefix shell commands with rtk.
 - Nix devShell provides Go, Node.js, git, ripgrep, jq, curl, Ruby, OpenSSH, and build tools.
 - Install AI CLIs with: forge-ai-agent-npm-tools
+- Caveman skill/plugin support is installed by forge-ai-agent-npm-tools with native agent paths: Claude plugin, Codex skill, and opencode skill. Use caveman style by default: terse, no filler, preserve exact code/commands/errors. Do not enable caveman-shrink MCP unless explicitly requested.
 - Install Chromium for Playwright with: npx playwright install chromium'
 
             mkdir -p "$NPM_CONFIG_PREFIX" "$PLAYWRIGHT_BROWSERS_PATH" "$GOCACHE" "$GOPATH"
