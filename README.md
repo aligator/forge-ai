@@ -72,7 +72,7 @@ FORGEJO_TOKEN=<token> \
 docker compose --profile full up -d
 ```
 
-The `full` profile builds the forge-ai image. The image includes claude, codex, opencode, Playwright MCP, Forgejo MCP, RTK, and single-user Nix for the `agent` user. It mounts AI CLI credentials from the host:
+The `full` profile builds the forge-ai image. The image includes claude, codex, opencode, Playwright MCP, Forgejo MCP, Caveman skill/plugin support, RTK, and single-user Nix for the `agent` user. It mounts AI CLI credentials from the host:
 
 | Volume | Default host path |
 |--------|------------------|
@@ -118,6 +118,16 @@ Commit identity defaults to `GIT_USER_NAME` and `GIT_USER_EMAIL`. Override it pe
 Use `AGENT_0_COMMAND` only for custom shell wrappers; the service exposes the prompt there as `FORGE_AI_PROMPT`.
 
 API keys are still possible, but they are not configured by default. For Claude specifically, do not set `ANTHROPIC_API_KEY` when you want subscription auth; Claude Code gives the API key precedence over subscription OAuth.
+
+## Caveman skill/plugin
+
+The image and dev shell install Caveman skill/plugin support with each agent's native install path: Claude plugin, Codex skill, and opencode skill. Forge AI also tells spawned agents to use caveman style by default:
+
+- terse, direct, no filler;
+- exact code, commands, paths, API names, and errors preserved;
+- normal clarity for destructive actions, security warnings, or complex sequences;
+- `/caveman full` as default when the agent supports Caveman commands.
+
 
 ## Forgejo MCP
 

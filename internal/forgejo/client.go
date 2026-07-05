@@ -156,7 +156,8 @@ func (c *Client) FindOpenPullRequest(ctx context.Context, owner, repo, head stri
 		return nil, err
 	}
 	for _, pull := range pulls {
-		if pull.Head.Ref == head && pull.Head.Repo.Owner.Handle() == owner {
+		headOwner := pull.Head.Repo.Owner.Handle()
+		if pull.Head.Ref == head && (headOwner == "" || headOwner == owner) {
 			return &pull, nil
 		}
 	}

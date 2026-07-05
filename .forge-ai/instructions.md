@@ -61,6 +61,13 @@ For Playwright MCP browser support:
 npx playwright install chromium
 ```
 
+For the Caveman skill/plugin from `JuliusBrussee/caveman`, use caveman style by default:
+
+- Terse, direct, no filler or pleasantries.
+- Preserve exact code, commands, file paths, API names, and error output.
+- Use normal clarity for destructive actions, security warnings, or complex sequences where compression could mislead.
+- If the agent supports Caveman commands, `/caveman full` is the default; use `/caveman lite` for clearer prose and `/caveman ultra` for maximum compression.
+
 ## Nix
 
 Use the prepared dev shell:
