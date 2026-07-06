@@ -56,6 +56,11 @@ func (h *webhookHandler) Handle(ctx context.Context, event string, payload forge
 		}
 	}
 
+	if payload.Action == "deleted" {
+		h.logger.Info("ignored deleted webhook", "event", event, "ticket", ticket.Ref())
+		return nil
+	}
+
 	if !h.shouldRun(payload, ticket) {
 		sender := ""
 		if payload.Sender != nil {

@@ -86,6 +86,42 @@ func TestFindAgentPicksCorrectRunner(t *testing.T) {
 	}
 }
 
+func TestHandleIgnoresDeletedComment(t *testing.T) {
+	triggered := false
+	spy := &spyAgent{onRun: func() { triggered = true }}
+	svc := New(Options{
+		Config: config.Config{
+			Agents: []config.AgentRoute{
+				{User: "forge-ai", Mention: "@forge-ai"},
+			},
+			ForgejoBootstrapUser: "forge-ai",
+			MaxConcurrent:        1,
+		},
+		Agents: map[string]Agent{
+			"@forge-ai": spy,
+		},
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+
+	err := svc.Handle(context.Background(), "issue_comment", forgejo.WebhookPayload{
+		Action: "deleted",
+		Repository: forgejo.Repository{
+			Name:          "demo",
+			DefaultBranch: "main",
+			Owner:         forgejo.User{Login: "ac"},
+		},
+		Issue:   &forgejo.Issue{Index: 1, Title: "test"},
+		Comment: &forgejo.Comment{ID: 42, Body: "@forge-ai do something"},
+		Sender:  &forgejo.User{Login: "alice"},
+	})
+	if err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if triggered {
+		t.Fatal("agent must not be triggered on comment deletion")
+	}
+}
+
 func TestHandleRecordsRunStatusEventsLogsAndLinks(t *testing.T) {
 	store := &recordingRunStore{}
 	workdir := t.TempDir()

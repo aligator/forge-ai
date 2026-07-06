@@ -20,6 +20,17 @@ func (a *stubAgent) Run(_ context.Context, _, _, _ string) (agent.Result, error)
 	return a.result, a.err
 }
 
+type spyAgent struct {
+	onRun func()
+}
+
+func (a *spyAgent) Run(_ context.Context, _, _, _ string) (agent.Result, error) {
+	if a.onRun != nil {
+		a.onRun()
+	}
+	return agent.Result{}, nil
+}
+
 type streamingStubAgent struct {
 	result agent.Result
 	chunks []agent.OutputChunk
