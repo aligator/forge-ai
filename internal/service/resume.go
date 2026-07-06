@@ -5,15 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"codeberg.org/forge-ai/internal/config"
-	appruntime "codeberg.org/forge-ai/internal/runtime"
+	"codeberg.org/forge-ai/internal/gitops"
 	"codeberg.org/forge-ai/internal/runstore"
+	appruntime "codeberg.org/forge-ai/internal/runtime"
 )
 
 const (
 	WorkspaceModeSameBranchFreshWorkspace = "same_branch_fresh_workspace"
+	WorkspaceModeExistingWorkspace        = "existing_workspace"
 	WorkspaceModeManualContextOnly        = "manual_context_only"
 )
 
@@ -46,8 +49,11 @@ func (s *Service) ManualResume(ctx context.Context, parentRunID, agentMention, s
 	if sessionID == "" {
 		sessionID = parentRun.SessionID
 	}
-	if workspaceMode != WorkspaceModeSameBranchFreshWorkspace && workspaceMode != WorkspaceModeManualContextOnly {
+	if workspaceMode == "" {
 		workspaceMode = WorkspaceModeSameBranchFreshWorkspace
+	}
+	if !validWorkspaceMode(workspaceMode) {
+		return "", fmt.Errorf("invalid workspace mode %q", workspaceMode)
 	}
 	in := manualResumeInput{
 		ParentRunID:   parentRunID,
@@ -80,7 +86,7 @@ func (s *Service) ManualResume(ctx context.Context, parentRunID, agentMention, s
 		Kind:   parentRun.TicketKind,
 		Number: parentRun.TicketNumber,
 	}
-	if workspaceMode == WorkspaceModeSameBranchFreshWorkspace {
+	if workspaceMode == WorkspaceModeSameBranchFreshWorkspace || workspaceMode == WorkspaceModeExistingWorkspace {
 		spec.Branch = parentRun.Branch
 	}
 
@@ -147,6 +153,16 @@ func (r *workflowRunner) prepareResumeWorkspace(ctx context.Context, parentRun r
 		}
 		return workdir, func() { r.removeWorkspace(workdir) }, nil
 	}
+	if in.WorkspaceMode == WorkspaceModeExistingWorkspace {
+		workdir := resumeWorkspacePath(r.cfg.WorkspaceDir, parentRun)
+		if _, err := os.Stat(filepath.Join(workdir, ".git")); err != nil {
+			if os.IsNotExist(err) {
+				return "", noop, fmt.Errorf("existing workspace not available: %s", workdir)
+			}
+			return "", noop, fmt.Errorf("inspect existing workspace: %w", err)
+		}
+		return workdir, noop, nil
+	}
 	// manual_context_only: agent uses session context only, no git workspace needed
 	workdir, err := os.MkdirTemp("", "forge-ai-resume-*")
 	if err != nil {
@@ -166,7 +182,7 @@ func (r *workflowRunner) tokenForMention(mention string) string {
 
 func (r *workflowRunner) createResumeRun(ctx context.Context, parentRun runstore.Run, in manualResumeInput) (runstore.Run, error) {
 	if r.runStore == nil {
-		return runstore.Run{}, nil
+		return runstore.Run{}, errors.New("run store not configured")
 	}
 	agentType := ""
 	for _, route := range r.cfg.Agents {
@@ -196,6 +212,20 @@ func (r *workflowRunner) createResumeRun(ctx context.Context, parentRun runstore
 	}
 	r.addRunEvent(ctx, run.ID, "queued", "manual resume queued")
 	return run, nil
+}
+
+func validWorkspaceMode(mode string) bool {
+	switch mode {
+	case WorkspaceModeSameBranchFreshWorkspace, WorkspaceModeExistingWorkspace, WorkspaceModeManualContextOnly:
+		return true
+	default:
+		return false
+	}
+}
+
+func resumeWorkspacePath(workspaceRoot string, parentRun runstore.Run) string {
+	branch := gitops.BranchRefName(parentRun.Branch)
+	return filepath.Join(workspaceRoot, gitops.Slug(parentRun.Owner+"-"+parentRun.Repo+"-"+branch))
 }
 
 func (h *webhookHandler) agentFor(mention string) (Agent, config.GitIdentity) {

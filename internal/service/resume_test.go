@@ -2,9 +2,10 @@ package service
 
 import (
 	"context"
-	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -207,11 +208,130 @@ func TestManualResumeWorkspaceModeManualContextOnly(t *testing.T) {
 	}
 }
 
-func TestManualResumeInvalidWorkspaceModeDefaultsToFreshWorkspace(t *testing.T) {
+func TestManualResumeWorkspaceModeExistingWorkspace(t *testing.T) {
 	store := &recordingRunStore{}
-	workdir := t.TempDir()
-	store.runs = append(store.runs, runstore.Run{
+	workspaceRoot := t.TempDir()
+	parentRun := runstore.Run{
 		ID:           "parent-run-4",
+		Kind:         runstore.RunKindWebhookRun,
+		Status:       runstore.StatusSuccess,
+		Owner:        "ac",
+		Repo:         "demo",
+		TicketKind:   "issue",
+		TicketNumber: 9,
+		Branch:       "main",
+		BaseBranch:   "main",
+		AgentMention: "@codex",
+		SessionID:    "session-x",
+	}
+	existingWorkdir := resumeWorkspacePath(workspaceRoot, parentRun)
+	if err := os.MkdirAll(filepath.Join(existingWorkdir, ".git"), 0o755); err != nil {
+		t.Fatalf("create existing workspace: %v", err)
+	}
+	store.runs = append(store.runs, parentRun)
+
+	gitPrepared := false
+	git := &spyGit{prepare: func() { gitPrepared = true }, workdir: t.TempDir()}
+	agentWorkdir := ""
+	svc := New(Options{
+		Config: config.Config{
+			Agents:               []config.AgentRoute{{User: "codex", Mention: "@codex", Agent: config.AgentConfig{Timeout: 30 * time.Minute}}},
+			WorkspaceDir:         workspaceRoot,
+			ForgejoURL:           "http://forgejo.test",
+			MaxConcurrent:        1,
+			ForgejoBootstrapUser: "forge-ai",
+		},
+		Git:      git,
+		Agents:   map[string]Agent{"@codex": &captureWorkdirAgent{workdir: func(w string) { agentWorkdir = w }}},
+		RunStore: store,
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+
+	_, err := svc.ManualResume(context.Background(), "parent-run-4", "@codex", "", WorkspaceModeExistingWorkspace, "use existing", "dave")
+	if err != nil {
+		t.Fatalf("ManualResume() error = %v", err)
+	}
+
+	deadline := time.After(5 * time.Second)
+	for {
+		store.mu.Lock()
+		n := len(store.statuses)
+		store.mu.Unlock()
+		if n > 0 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timed out")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	if gitPrepared {
+		t.Fatal("git.Prepare should not be called for existing_workspace mode")
+	}
+	if agentWorkdir != existingWorkdir {
+		t.Fatalf("agent workdir = %q, want %q", agentWorkdir, existingWorkdir)
+	}
+}
+
+func TestManualResumeWorkspaceModeExistingWorkspaceRequiresCheckout(t *testing.T) {
+	store := &recordingRunStore{}
+	parentRun := runstore.Run{
+		ID:           "parent-run-missing-workspace",
+		Kind:         runstore.RunKindWebhookRun,
+		Status:       runstore.StatusSuccess,
+		Owner:        "ac",
+		Repo:         "demo",
+		TicketKind:   "issue",
+		TicketNumber: 9,
+		Branch:       "main",
+		BaseBranch:   "main",
+		AgentMention: "@codex",
+		SessionID:    "session-x",
+	}
+	store.runs = append(store.runs, parentRun)
+
+	svc := New(Options{
+		Config: config.Config{
+			Agents:               []config.AgentRoute{{User: "codex", Mention: "@codex", Agent: config.AgentConfig{Timeout: 30 * time.Minute}}},
+			WorkspaceDir:         t.TempDir(),
+			ForgejoURL:           "http://forgejo.test",
+			MaxConcurrent:        1,
+			ForgejoBootstrapUser: "forge-ai",
+		},
+		Git:      &spyGit{workdir: t.TempDir()},
+		Agents:   map[string]Agent{"@codex": &streamingStubAgent{result: agent.Result{}}},
+		RunStore: store,
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+
+	runID, err := svc.ManualResume(context.Background(), parentRun.ID, "@codex", "", WorkspaceModeExistingWorkspace, "use existing", "dave")
+	if err != nil {
+		t.Fatalf("ManualResume() error = %v", err)
+	}
+
+	deadline := time.After(5 * time.Second)
+	for {
+		run, _ := store.GetRun(context.Background(), runID)
+		if run.Status == runstore.StatusFailed {
+			if run.Error == "" {
+				t.Fatal("failed run did not record an error")
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for failed status")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func TestManualResumeInvalidWorkspaceModeReturnsError(t *testing.T) {
+	store := &recordingRunStore{}
+	store.runs = append(store.runs, runstore.Run{
+		ID:           "parent-run-invalid-mode",
 		Kind:         runstore.RunKindWebhookRun,
 		Status:       runstore.StatusSuccess,
 		Owner:        "ac",
@@ -227,34 +347,17 @@ func TestManualResumeInvalidWorkspaceModeDefaultsToFreshWorkspace(t *testing.T) 
 	svc := New(Options{
 		Config: config.Config{
 			Agents:               []config.AgentRoute{{User: "codex", Mention: "@codex", Agent: config.AgentConfig{Timeout: 30 * time.Minute}}},
-			WorkspaceDir:         t.TempDir(),
-			ForgejoURL:           "http://forgejo.test",
-			CloneURLBase:         "http://forgejo.test",
 			MaxConcurrent:        1,
 			ForgejoBootstrapUser: "forge-ai",
 		},
-		Git:      &recordingGit{workdir: workdir},
 		Agents:   map[string]Agent{"@codex": &streamingStubAgent{result: agent.Result{}}},
 		RunStore: store,
 		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 
-	_, err := svc.ManualResume(context.Background(), "parent-run-4", "@codex", "", "totally_invalid_mode", "do work", "dave")
-	if err != nil {
-		t.Fatalf("ManualResume() error = %v", err)
-	}
-
-	// Wait briefly for the run to start (workspace_ready confirms same_branch_fresh_workspace was used)
-	deadline := time.After(5 * time.Second)
-	for {
-		if store.hasEvent("workspace_ready") {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatal("timed out waiting for workspace_ready event")
-		case <-time.After(10 * time.Millisecond):
-		}
+	_, err := svc.ManualResume(context.Background(), "parent-run-invalid-mode", "@codex", "", "totally_invalid_mode", "do work", "dave")
+	if err == nil || err.Error() != `invalid workspace mode "totally_invalid_mode"` {
+		t.Fatalf("ManualResume() error = %v, want invalid workspace mode", err)
 	}
 }
 
@@ -276,6 +379,15 @@ func TestManualResumeRequiresNonEmptyPrompt(t *testing.T) {
 	_, err := svc.ManualResume(context.Background(), "parent-run-x", "", "", "", "   ", "")
 	if err == nil || err.Error() != "prompt is required" {
 		t.Fatalf("expected 'prompt is required' error, got %v", err)
+	}
+}
+
+func TestCreateResumeRunRequiresRunStore(t *testing.T) {
+	runner := &workflowRunner{}
+
+	_, err := runner.createResumeRun(context.Background(), runstore.Run{}, manualResumeInput{})
+	if err == nil || err.Error() != "run store not configured" {
+		t.Fatalf("createResumeRun() error = %v, want run store not configured", err)
 	}
 }
 
@@ -364,6 +476,20 @@ func (a *captureSessionAgent) RunWithOptions(_ context.Context, opts agent.RunOp
 	return agent.Result{}, nil
 }
 
+type captureWorkdirAgent struct {
+	workdir func(string)
+}
+
+func (a *captureWorkdirAgent) Run(_ context.Context, workdir, _, _ string) (agent.Result, error) {
+	a.workdir(workdir)
+	return agent.Result{}, nil
+}
+
+func (a *captureWorkdirAgent) RunWithOptions(_ context.Context, opts agent.RunOptions) (agent.Result, error) {
+	a.workdir(opts.Workdir)
+	return agent.Result{}, nil
+}
+
 // spyGit records whether Prepare was called.
 type spyGit struct {
 	workdir string
@@ -378,7 +504,7 @@ func (g *spyGit) Prepare(_ context.Context, _, _, _, _, _, _, _ string, _ config
 }
 
 func (g *spyGit) CommitIfDirty(_ context.Context, _, _ string) (bool, error) { return false, nil }
-func (g *spyGit) Push(_ context.Context, _, _ string) error                   { return nil }
+func (g *spyGit) Push(_ context.Context, _, _ string) error                  { return nil }
 
 // blockingAgent blocks until done is closed, then returns a context error.
 type blockingAgent struct {
@@ -393,5 +519,5 @@ func (a *blockingAgent) Run(ctx context.Context, _, _, _ string) (agent.Result, 
 func (a *blockingAgent) RunWithOptions(ctx context.Context, _ agent.RunOptions) (agent.Result, error) {
 	close(a.started)
 	<-a.done
-	return agent.Result{}, errors.New("context canceled")
+	return agent.Result{}, ctx.Err()
 }

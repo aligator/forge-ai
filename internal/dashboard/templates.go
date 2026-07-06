@@ -380,13 +380,14 @@ const templates = `
 		<div class="resume-form__row">
 			<label class="resume-form__label">Workspace mode</label>
 			<select name="workspace_mode" class="resume-form__input">
-				<option value="same_branch_fresh_workspace">same_branch_fresh_workspace (recommended — fresh clone)</option>
+				<option value="same_branch_fresh_workspace">same_branch_fresh_workspace (recommended - fresh clone)</option>
+				<option value="existing_workspace">existing_workspace (reuse current workspace)</option>
 				<option value="manual_context_only">manual_context_only (session context only, no workspace)</option>
 			</select>
 		</div>
 		<div class="resume-form__row resume-form__row--prompt">
 			<label class="resume-form__label">Prompt</label>
-			<textarea name="prompt" rows="6" class="resume-form__input resume-form__textarea" placeholder="Instructions for the agent to continue…"></textarea>
+			<textarea name="prompt" rows="6" class="resume-form__input resume-form__textarea" placeholder="Instructions for the agent to continue"></textarea>
 		</div>
 		<div class="resume-form__actions">
 			<button type="submit" class="button">Start resume run</button>

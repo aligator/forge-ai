@@ -27,7 +27,10 @@ func (h *Handler) resumeRun(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		data := h.baseData(r, "Resume Error", "runs")
 		data.Error = "Resume failed: " + err.Error()
-		h.render(w, r, "run_detail", data)
+		if !h.loadRunDetail(w, r, parentRunID, &data) {
+			return
+		}
+		h.renderStatus(w, r, http.StatusBadRequest, "run_detail", data)
 		return
 	}
 	http.Redirect(w, r, "/dashboard/runs/"+newRunID, http.StatusSeeOther)
@@ -39,6 +42,24 @@ func (h *Handler) stopRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runID := r.PathValue("id")
-	h.resumer.CancelRun(runID)
+	if !h.resumer.CancelRun(runID) {
+		h.logger.Warn("dashboard cancel run failed", "run_id", runID)
+	}
 	http.Redirect(w, r, "/dashboard/runs/"+runID, http.StatusSeeOther)
+}
+
+func (h *Handler) loadRunDetail(w http.ResponseWriter, r *http.Request, runID string, data *pageData) bool {
+	run, err := h.store.GetRun(r.Context(), runID)
+	if err != nil {
+		h.renderRunError(w, r, err, *data)
+		return false
+	}
+	data.Title = "Run " + shortID(run.ID)
+	data.Run = run
+	data.Events, _ = h.store.ListEvents(r.Context(), run.ID)
+	data.Logs, _ = h.store.ListLogChunks(r.Context(), run.ID)
+	data.Links, _ = h.store.ListLinks(r.Context(), run.ID)
+	data.RunLinks = runLinks(h.cfg.ForgejoURL, run, data.Links)
+	data.AgentCtx = h.agentContext(run)
+	return true
 }
