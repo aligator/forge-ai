@@ -425,7 +425,7 @@ func (r *workflowRunner) removeWorkspace(workdir string) {
 		r.logger.Warn("skip unsafe workspace cleanup", "workdir", workdir)
 		return
 	}
-	if err := os.RemoveAll(workdir); err != nil {
+	if err := gitops.ForceRemoveAll(workdir); err != nil {
 		r.logger.Warn("workspace cleanup failed", "workdir", workdir, "error", err)
 		return
 	}

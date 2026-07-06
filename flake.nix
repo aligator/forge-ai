@@ -76,11 +76,18 @@
           ];
 
           shellHook = ''
-            export PATH="$PWD/.nix-npm/bin:$PATH"
-            export NPM_CONFIG_PREFIX="''${FORGE_AI_NPM_PREFIX:-$PWD/.nix-npm}"
-            export PLAYWRIGHT_BROWSERS_PATH="''${PLAYWRIGHT_BROWSERS_PATH:-$PWD/.cache/ms-playwright}"
-            export GOCACHE="''${GOCACHE:-$PWD/.cache/go-build}"
-            export GOPATH="''${GOPATH:-$PWD/.cache/go}"
+            # In the forge-ai container keep caches under $HOME, out of the
+            # workspace (read-only Go mod cache would block cleanup); else $PWD.
+            if [ -n "''${FORGE_AI_CONTAINER:-}" ]; then
+              CACHE_BASE="$HOME"
+            else
+              CACHE_BASE="$PWD"
+            fi
+            export PATH="$CACHE_BASE/.nix-npm/bin:$PATH"
+            export NPM_CONFIG_PREFIX="''${FORGE_AI_NPM_PREFIX:-$CACHE_BASE/.nix-npm}"
+            export PLAYWRIGHT_BROWSERS_PATH="''${PLAYWRIGHT_BROWSERS_PATH:-$CACHE_BASE/.cache/ms-playwright}"
+            export GOCACHE="''${GOCACHE:-$CACHE_BASE/.cache/go-build}"
+            export GOPATH="''${GOPATH:-$CACHE_BASE/.cache/go}"
             export AGENT_TOOL_HINTS='- rtk is available on this host when installed. Prefix shell commands with rtk.
 - Nix devShell provides Go, Node.js, git, ripgrep, jq, curl, Ruby, OpenSSH, and build tools.
 - Install AI CLIs with: forge-ai-agent-npm-tools

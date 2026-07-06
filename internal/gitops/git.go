@@ -20,6 +20,27 @@ type Git struct {
 	logger *slog.Logger
 }
 
+// ForceRemoveAll is os.RemoveAll, but on failure it restores write permission
+// on read-only entries (e.g. the Go module cache, 0444/0555, which otherwise
+// causes "unlinkat ... permission denied") and retries.
+func ForceRemoveAll(path string) error {
+	if err := os.RemoveAll(path); err == nil {
+		return nil
+	}
+	_ = filepath.WalkDir(path, func(name string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		mode := os.FileMode(0o600)
+		if d.IsDir() {
+			mode = 0o700
+		}
+		_ = os.Chmod(name, mode)
+		return nil
+	})
+	return os.RemoveAll(path)
+}
+
 func New(cfg config.GitConfig, logger *slog.Logger) *Git {
 	return &Git{cfg: cfg, logger: logger}
 }
@@ -37,7 +58,7 @@ func (g *Git) Prepare(ctx context.Context, workspaceRoot, cloneURL, token, owner
 		// Remove stale directory left by a previously interrupted clone.
 		if _, statErr := os.Stat(workdir); statErr == nil {
 			g.logger.Warn("removing stale workspace without .git", "workdir", workdir)
-			if err := os.RemoveAll(workdir); err != nil {
+			if err := ForceRemoveAll(workdir); err != nil {
 				return "", err
 			}
 		}
