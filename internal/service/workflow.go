@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -189,6 +190,13 @@ func (r *workflowRunner) createRun(ctx context.Context, payload forgejo.WebhookP
 	}
 	r.addRunEvent(ctx, run.ID, "queued", "webhook accepted")
 	r.addRunLink(ctx, run.ID, "ticket", ticket.HTMLURL, ticket.Ref())
+	if ticket.CommentID != 0 {
+		r.addRunLink(ctx, run.ID, "trigger_comment", ticket.HTMLURL+"#issuecomment-"+strconv.FormatInt(ticket.CommentID, 10), "Trigger comment")
+	}
+	if r.cfg.ForgejoURL != "" {
+		branchURL := strings.TrimRight(r.cfg.ForgejoURL, "/") + "/" + ticket.Owner + "/" + ticket.Repo + "/src/branch/" + url.PathEscape(branch)
+		r.addRunLink(ctx, run.ID, "branch", branchURL, branch)
+	}
 	return run, nil
 }
 

@@ -9,6 +9,7 @@ import (
 
 	"codeberg.org/forge-ai/internal/config"
 	"codeberg.org/forge-ai/internal/runstore"
+	appruntime "codeberg.org/forge-ai/internal/runtime"
 )
 
 type pageData struct {
@@ -20,11 +21,20 @@ type pageData struct {
 	ModeLabel   string
 	Agents      []config.AgentRoute
 	Runs        []runstore.Run
+	ActiveRuns  []runstore.Run
+	RecentRuns  []runstore.Run
+	FailedRuns  []runstore.Run
 	Run         runstore.Run
 	Events      []runstore.Event
 	Logs        []runstore.LogChunk
 	Links       []runstore.Link
+	RunLinks    []runLinkItem
+	Health      []healthItem
+	Runtime     appruntime.Snapshot
+	AgentCtx    agentContext
 	Status      string
+	Sort        string
+	Direction   string
 	Error       string
 	Partial     bool
 	GeneratedAt time.Time
@@ -65,7 +75,7 @@ func (h *Handler) renderStatus(w http.ResponseWriter, r *http.Request, status in
 	}
 }
 
-func (h *Handler) baseData(_ *http.Request, title, active string) pageData {
+func (h *Handler) baseData(r *http.Request, title, active string) pageData {
 	queue := fmt.Sprintf("Queue %d slot", h.cfg.MaxConcurrent)
 	if h.cfg.MaxConcurrent != 1 {
 		queue += "s"
@@ -74,12 +84,15 @@ func (h *Handler) baseData(_ *http.Request, title, active string) pageData {
 	if !h.cfg.CreatePR {
 		mode = "Internal mode on"
 	}
+	snap := h.runtimeSnapshot()
 	return pageData{
 		Title:       title,
 		Active:      active,
 		ForgejoURL:  h.cfg.ForgejoURL,
 		QueueLabel:  queue,
 		ModeLabel:   mode,
+		Health:      h.health(r.Context()),
+		Runtime:     snap,
 		GeneratedAt: time.Now().UTC(),
 	}
 }

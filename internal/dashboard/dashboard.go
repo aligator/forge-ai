@@ -6,9 +6,12 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"sync"
+	"time"
 
 	"codeberg.org/forge-ai/internal/config"
 	"codeberg.org/forge-ai/internal/runstore"
+	appruntime "codeberg.org/forge-ai/internal/runtime"
 )
 
 //go:embed assets
@@ -25,27 +28,47 @@ type Store interface {
 }
 
 type Handler struct {
-	cfg    config.Config
-	store  Store
-	logger *slog.Logger
-	tmpl   *template.Template
+	cfg      config.Config
+	store    Store
+	runtime  RuntimeSnapshotter
+	logger   *slog.Logger
+	tmpl     *template.Template
+	redactor dashboardRedactor
+
+	healthMu      sync.Mutex
+	healthCache   []healthItem
+	healthCacheAt time.Time
 }
 
-func New(cfg config.Config, store Store, logger *slog.Logger) *Handler {
+type RuntimeSnapshotter interface {
+	RuntimeSnapshot() appruntime.Snapshot
+}
+
+func New(cfg config.Config, store Store, logger *slog.Logger, runtime ...RuntimeSnapshotter) *Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Handler{
-		cfg:    cfg,
-		store:  store,
-		logger: logger,
-		tmpl: template.Must(template.New("dashboard").Funcs(template.FuncMap{
-			"formatTime":  formatTime,
-			"statusClass": statusClass,
-			"ticketURL":   forgejoTicketURL,
-			"shortID":     shortID,
-		}).Parse(templates)),
+	var snapshotter RuntimeSnapshotter
+	if len(runtime) > 0 {
+		snapshotter = runtime[0]
 	}
+	h := &Handler{
+		cfg:      cfg,
+		store:    store,
+		runtime:  snapshotter,
+		logger:   logger,
+		redactor: newDashboardRedactor(cfg),
+	}
+	h.tmpl = template.Must(template.New("dashboard").Funcs(template.FuncMap{
+		"formatTime":     formatTime,
+		"formatDuration": formatDuration,
+		"statusClass":    statusClass,
+		"healthClass":    healthClass,
+		"ticketURL":      forgejoTicketURL,
+		"shortID":        shortID,
+		"redactLog":      h.redactor.Redact,
+	}).Parse(templates))
+	return h
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {

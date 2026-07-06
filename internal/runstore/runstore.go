@@ -39,6 +39,8 @@ type RunStore interface {
 type ListRunsOptions struct {
 	Limit  int
 	Status Status
+	Sort   string
+	Desc   bool
 }
 
 type Run struct {

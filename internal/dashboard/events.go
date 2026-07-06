@@ -60,6 +60,8 @@ func (h *Handler) writeNewRunMessages(ctx context.Context, w http.ResponseWriter
 		return err
 	}
 	for _, event := range events {
+		event.Message = h.redactor.Redact(event.Message)
+		event.DataJSON = h.redactor.Redact(event.DataJSON)
 		if err := writeSSE(w, "run_event", event.ID, event); err != nil {
 			return err
 		}
@@ -71,6 +73,7 @@ func (h *Handler) writeNewRunMessages(ctx context.Context, w http.ResponseWriter
 		return err
 	}
 	for _, chunk := range logs {
+		chunk.Chunk = h.redactor.Redact(chunk.Chunk)
 		if err := writeSSE(w, "run_log", chunk.ID, chunk); err != nil {
 			return err
 		}

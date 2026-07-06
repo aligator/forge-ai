@@ -126,3 +126,61 @@ func TestSQLiteStoreRejectsInvalidStatusTransition(t *testing.T) {
 		t.Fatalf("status = %s, want queued", got.Status)
 	}
 }
+
+func TestSQLiteStoreListRunsFiltersAndSorts(t *testing.T) {
+	ctx := context.Background()
+	store, err := OpenSQLite(ctx, filepath.Join(t.TempDir(), "runstore.sqlite"))
+	if err != nil {
+		t.Fatalf("OpenSQLite() error = %v", err)
+	}
+	defer store.Close()
+
+	start := time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
+	first, err := store.CreateRun(ctx, CreateRunInput{
+		Status:       StatusQueued,
+		Owner:        "ac",
+		Repo:         "demo",
+		TicketKind:   "issue",
+		TicketNumber: 1,
+		Branch:       "one",
+		BaseBranch:   "main",
+		AgentMention: "@claude",
+		StartedAt:    start,
+	})
+	if err != nil {
+		t.Fatalf("CreateRun(first) error = %v", err)
+	}
+	second, err := store.CreateRun(ctx, CreateRunInput{
+		Status:       StatusQueued,
+		Owner:        "ac",
+		Repo:         "demo",
+		TicketKind:   "issue",
+		TicketNumber: 2,
+		Branch:       "two",
+		BaseBranch:   "main",
+		AgentMention: "@codex",
+		StartedAt:    start.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CreateRun(second) error = %v", err)
+	}
+	if err := store.UpdateRunStatus(ctx, first.ID, StatusRunning, time.Time{}, ""); err != nil {
+		t.Fatalf("UpdateRunStatus(first) error = %v", err)
+	}
+
+	runs, err := store.ListRuns(ctx, ListRunsOptions{Status: StatusQueued, Sort: "agent", Desc: false})
+	if err != nil {
+		t.Fatalf("ListRuns() error = %v", err)
+	}
+	if len(runs) != 1 || runs[0].ID != second.ID {
+		t.Fatalf("queued runs = %+v, want only %s", runs, second.ID)
+	}
+
+	runs, err = store.ListRuns(ctx, ListRunsOptions{Sort: "agent", Desc: false})
+	if err != nil {
+		t.Fatalf("ListRuns(agent) error = %v", err)
+	}
+	if len(runs) != 2 || runs[0].AgentMention != "@claude" || runs[1].AgentMention != "@codex" {
+		t.Fatalf("agent-sorted runs = %+v", runs)
+	}
+}

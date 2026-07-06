@@ -9,12 +9,16 @@ import (
 func (h *Handler) overview(w http.ResponseWriter, r *http.Request) {
 	data := h.baseData(r, "Overview", "overview")
 	if h.store != nil {
-		runs, err := h.store.ListRuns(r.Context(), runstore.ListRunsOptions{Limit: 8})
+		runs, err := h.store.ListRuns(r.Context(), runstore.ListRunsOptions{Limit: 50, Sort: "started", Desc: true})
 		if err != nil {
 			data.Error = "Run data is currently unavailable."
 			h.logger.Warn("dashboard list runs failed", "error", err)
 		} else {
 			data.Runs = runs
+			summary := splitRunSummary(runs)
+			data.ActiveRuns = summary.ActiveRuns
+			data.RecentRuns = summary.CompletedRuns
+			data.FailedRuns = summary.FailedRuns
 		}
 	}
 	h.render(w, r, "overview", data)
@@ -29,7 +33,13 @@ func (h *Handler) runs(w http.ResponseWriter, r *http.Request) {
 	}
 	status := runstore.Status(r.URL.Query().Get("status"))
 	data.Status = string(status)
-	runs, err := h.store.ListRuns(r.Context(), runstore.ListRunsOptions{Limit: 50, Status: status})
+	data.Sort = normalizeSort(r.URL.Query().Get("sort"))
+	desc := normalizeDirection(r.URL.Query().Get("dir"))
+	data.Direction = "desc"
+	if !desc {
+		data.Direction = "asc"
+	}
+	runs, err := h.store.ListRuns(r.Context(), runstore.ListRunsOptions{Limit: 50, Status: status, Sort: data.Sort, Desc: desc})
 	if err != nil {
 		data.Error = "Run data is currently unavailable."
 		h.logger.Warn("dashboard list runs failed", "error", err)
@@ -56,6 +66,8 @@ func (h *Handler) runDetail(w http.ResponseWriter, r *http.Request) {
 	data.Events, _ = h.store.ListEvents(r.Context(), run.ID)
 	data.Logs, _ = h.store.ListLogChunks(r.Context(), run.ID)
 	data.Links, _ = h.store.ListLinks(r.Context(), run.ID)
+	data.RunLinks = runLinks(h.cfg.ForgejoURL, run, data.Links)
+	data.AgentCtx = h.agentContext(run)
 	h.render(w, r, "run_detail", data)
 }
 

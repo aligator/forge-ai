@@ -15,6 +15,24 @@ func formatTime(t time.Time) string {
 	return t.UTC().Format("2006-01-02 15:04:05 UTC")
 }
 
+func formatDuration(start, finish time.Time) string {
+	if start.IsZero() {
+		return "-"
+	}
+	end := finish
+	if end.IsZero() {
+		end = time.Now().UTC()
+	}
+	d := end.Sub(start)
+	if d < 0 {
+		return "-"
+	}
+	if d < time.Second {
+		return d.Round(time.Millisecond).String()
+	}
+	return d.Round(time.Second).String()
+}
+
 func statusClass(status runstore.Status) string {
 	switch status {
 	case runstore.StatusSuccess:
@@ -28,6 +46,13 @@ func statusClass(status runstore.Status) string {
 	default:
 		return "status"
 	}
+}
+
+func healthClass(ok bool) string {
+	if ok {
+		return "status status--success"
+	}
+	return "status status--danger"
 }
 
 func shortID(id string) string {

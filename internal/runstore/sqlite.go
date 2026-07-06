@@ -236,7 +236,24 @@ func (s *SQLiteStore) ListRuns(ctx context.Context, opts ListRunsOptions) ([]Run
 		query += ` WHERE status = ?`
 		args = append(args, opts.Status)
 	}
-	query += ` ORDER BY started_at DESC, id DESC LIMIT ?`
+	orderBy := "started_at"
+	switch opts.Sort {
+	case "", "started":
+		orderBy = "started_at"
+	case "finished":
+		orderBy = "finished_at"
+	case "status":
+		orderBy = "status"
+	case "agent":
+		orderBy = "agent_mention"
+	case "ticket":
+		orderBy = "owner, repo, ticket_kind, ticket_number"
+	}
+	direction := "ASC"
+	if opts.Desc {
+		direction = "DESC"
+	}
+	query += ` ORDER BY ` + orderBy + ` ` + direction + `, id DESC LIMIT ?`
 	args = append(args, limit)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)

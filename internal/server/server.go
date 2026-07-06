@@ -27,7 +27,11 @@ func New(cfg config.Config, workflow Workflow, dashboardStore dashboard.Store, l
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("POST /webhook", handleWebhook(cfg, workflow, logger))
-	dashboard.New(cfg, dashboardStore, logger).Register(mux)
+	var snapshotter dashboard.RuntimeSnapshotter
+	if s, ok := workflow.(dashboard.RuntimeSnapshotter); ok {
+		snapshotter = s
+	}
+	dashboard.New(cfg, dashboardStore, logger, snapshotter).Register(mux)
 	return mux
 }
 

@@ -10,6 +10,16 @@
 - Do not edit generated/build output in `dist/` unless the task explicitly requires release artifacts.
 - Keep changes minimal and focused.
 
+## Style
+
+- Do not write one-line `if` statements. Always use braces with the condition, body, and closing brace on separate lines:
+
+```go
+if condition {
+	doThing()
+}
+```
+
 ## Validation
 
 Prefer targeted checks:
