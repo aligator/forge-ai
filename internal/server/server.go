@@ -31,7 +31,11 @@ func New(cfg config.Config, workflow Workflow, dashboardStore dashboard.Store, l
 	if s, ok := workflow.(dashboard.RuntimeSnapshotter); ok {
 		snapshotter = s
 	}
-	dashboard.New(cfg, dashboardStore, logger, snapshotter).Register(mux)
+	dh := dashboard.New(cfg, dashboardStore, logger, snapshotter)
+	if r, ok := workflow.(dashboard.ManualResumer); ok {
+		dh.WithResumer(r)
+	}
+	dh.Register(mux)
 	return mux
 }
 

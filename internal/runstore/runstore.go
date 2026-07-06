@@ -29,6 +29,7 @@ const (
 
 type RunStore interface {
 	CreateRun(context.Context, CreateRunInput) (Run, error)
+	GetRun(context.Context, string) (Run, error)
 	UpdateRunStatus(context.Context, string, Status, time.Time, string) error
 	SetSessionID(context.Context, string, string) error
 	AddEvent(context.Context, EventInput) error

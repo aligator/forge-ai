@@ -261,7 +261,14 @@ const templates = `
 		<h1>Run {{shortID .Run.ID}}</h1>
 		<p>{{.Run.Owner}}/{{.Run.Repo}} {{.Run.TicketKind}} #{{.Run.TicketNumber}}</p>
 	</div>
-	<span data-run-status class="{{statusClass .Run.Status}}">{{.Run.Status}}</span>
+	<div class="page-head-actions">
+		<span data-run-status class="{{statusClass .Run.Status}}">{{.Run.Status}}</span>
+		{{if and .CanResume (or (eq (print .Run.Status) "running") (eq (print .Run.Status) "queued"))}}
+		<form method="post" action="/dashboard/runs/{{.Run.ID}}/stop">
+			<button type="submit" class="button button--danger button--small">Stop run</button>
+		</form>
+		{{end}}
+	</div>
 </section>
 {{template "error" .}}
 {{if .Run.ID}}
@@ -269,6 +276,7 @@ const templates = `
 	<div class="panel">
 		<h2>Run summary</h2>
 		<dl class="facts">
+			<dt>Kind</dt><dd>{{.Run.Kind}}</dd>
 			<dt>Status</dt><dd><span class="{{statusClass .Run.Status}}">{{.Run.Status}}</span></dd>
 			<dt>Branch</dt><dd class="mono">{{.Run.Branch}}</dd>
 			<dt>Base</dt><dd class="mono">{{.Run.BaseBranch}}</dd>
@@ -277,6 +285,7 @@ const templates = `
 			<dt>Session</dt><dd class="mono">{{if .Run.SessionID}}{{.Run.SessionID}}{{else}}-{{end}}</dd>
 			<dt>Started</dt><dd>{{formatTime .Run.StartedAt}}</dd>
 			<dt>Finished</dt><dd>{{formatTime .Run.FinishedAt}}</dd>
+			{{if .Run.ParentRunID}}<dt>Parent run</dt><dd><a class="mono-link" href="/dashboard/runs/{{.Run.ParentRunID}}">{{shortID .Run.ParentRunID}}</a></dd>{{end}}
 		</dl>
 	</div>
 	<div class="panel">
@@ -351,6 +360,40 @@ const templates = `
 	<p class="empty-inline" data-log-empty>No log chunks recorded.</p>
 	{{end}}
 </section>
+{{if .CanResume}}
+<section class="panel resume-panel">
+	<div class="panel-head">
+		<h2>Resume session</h2>
+		<span class="muted">Start a manual_resume run continuing this session</span>
+	</div>
+	<form method="post" action="/dashboard/runs/{{.Run.ID}}/resume" class="resume-form">
+		<div class="resume-form__row">
+			<label class="resume-form__label">Agent</label>
+			<select name="agent_mention" class="resume-form__input">
+				{{range .Agents}}<option value="{{.Mention}}"{{if eq .Mention $.Run.AgentMention}} selected{{end}}>{{.Mention}}{{if .Agent.Type}} ({{.Agent.Type}}){{end}}</option>{{end}}
+			</select>
+		</div>
+		<div class="resume-form__row">
+			<label class="resume-form__label">Session ID</label>
+			<input type="text" name="session_id" value="{{.Run.SessionID}}" class="resume-form__input mono" placeholder="(auto-inherited from parent)">
+		</div>
+		<div class="resume-form__row">
+			<label class="resume-form__label">Workspace mode</label>
+			<select name="workspace_mode" class="resume-form__input">
+				<option value="same_branch_fresh_workspace">same_branch_fresh_workspace (recommended — fresh clone)</option>
+				<option value="manual_context_only">manual_context_only (session context only, no workspace)</option>
+			</select>
+		</div>
+		<div class="resume-form__row resume-form__row--prompt">
+			<label class="resume-form__label">Prompt</label>
+			<textarea name="prompt" rows="6" class="resume-form__input resume-form__textarea" placeholder="Instructions for the agent to continue…"></textarea>
+		</div>
+		<div class="resume-form__actions">
+			<button type="submit" class="button">Start resume run</button>
+		</div>
+	</form>
+</section>
+{{end}}
 {{end}}
 </div>
 {{end}}

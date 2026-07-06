@@ -254,6 +254,25 @@ tbody tr:hover { background: #fbfcfd; }
 }
 .log-view--nowrap { white-space: pre; }
 .log-view span { display: block; }
+.page-head-actions { display: flex; align-items: center; gap: 10px; }
+.resume-panel { margin-top: 16px; }
+.resume-form { display: grid; gap: 12px; }
+.resume-form__row { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 8px; align-items: start; }
+.resume-form__row--prompt { align-items: start; }
+.resume-form__label { padding-top: 7px; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; }
+.resume-form__input {
+	width: 100%;
+	min-height: 34px;
+	padding: 6px 9px;
+	border: 1px solid var(--line-strong);
+	border-radius: 6px;
+	font-size: 13px;
+	font-family: inherit;
+	background: var(--panel);
+	color: var(--text);
+}
+.resume-form__textarea { min-height: 120px; resize: vertical; }
+.resume-form__actions { display: flex; gap: 10px; justify-content: flex-end; }
 .empty-state { padding: 26px; text-align: center; }
 .empty-state h2 { margin-bottom: 4px; }
 .empty-inline { margin: 0; color: var(--muted); }

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"sync"
 
 	"codeberg.org/forge-ai/internal/agent"
 	"codeberg.org/forge-ai/internal/config"
@@ -46,8 +47,10 @@ type Options struct {
 }
 
 type Service struct {
-	runtime *appruntime.Runtime
-	handler *webhookHandler
+	runtime  *appruntime.Runtime
+	handler  *webhookHandler
+	cancelMu sync.Mutex
+	cancels  map[string]context.CancelFunc // store run ID → cancel func for manual resume runs
 }
 
 func New(options Options) *Service {
@@ -64,6 +67,7 @@ func New(options Options) *Service {
 	}
 	return &Service{
 		runtime: rt,
+		cancels: make(map[string]context.CancelFunc),
 		handler: &webhookHandler{
 			cfg:            options.Config,
 			forgejo:        options.Forgejo,
@@ -93,5 +97,12 @@ func (s *Service) Resume() {
 }
 
 func (s *Service) CancelRun(id string) bool {
+	s.cancelMu.Lock()
+	cancel, ok := s.cancels[id]
+	s.cancelMu.Unlock()
+	if ok {
+		cancel()
+		return true
+	}
 	return s.runtime.CancelRun(id)
 }
