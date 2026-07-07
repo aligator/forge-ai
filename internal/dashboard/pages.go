@@ -56,18 +56,9 @@ func (h *Handler) runDetail(w http.ResponseWriter, r *http.Request) {
 		h.renderStatus(w, r, http.StatusServiceUnavailable, "run_detail", data)
 		return
 	}
-	run, err := h.store.GetRun(r.Context(), r.PathValue("id"))
-	if err != nil {
-		h.renderRunError(w, r, err, data)
+	if !h.loadRunDetail(w, r, r.PathValue("id"), &data) {
 		return
 	}
-	data.Title = "Run " + shortID(run.ID)
-	data.Run = run
-	data.Events, _ = h.store.ListEvents(r.Context(), run.ID)
-	data.Logs, _ = h.store.ListLogChunks(r.Context(), run.ID)
-	data.Links, _ = h.store.ListLinks(r.Context(), run.ID)
-	data.RunLinks = runLinks(h.cfg.ForgejoURL, run, data.Links)
-	data.AgentCtx = h.agentContext(run)
 	h.render(w, r, "run_detail", data)
 }
 

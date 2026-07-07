@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -22,6 +23,18 @@ type memoryStore struct {
 	logs    []runstore.LogChunk
 	links   []runstore.Link
 	lastOpt runstore.ListRunsOptions
+}
+
+type failingResumer struct {
+	cancelOK bool
+}
+
+func (r failingResumer) ManualResume(context.Context, string, string, string, string, string, string) (string, error) {
+	return "", errors.New("resume failed")
+}
+
+func (r failingResumer) CancelRun(string) bool {
+	return r.cancelOK
 }
 
 func (s *memoryStore) ListRuns(_ context.Context, opts runstore.ListRunsOptions) ([]runstore.Run, error) {
@@ -212,6 +225,48 @@ func TestRunDetailRendersContextLinksAndRedactedLogs(t *testing.T) {
 	}
 	if strings.Contains(body, "abc123456789") || !strings.Contains(body, "&lt;redacted&gt;") {
 		t.Fatalf("detail body did not redact secret:\n%s", body)
+	}
+}
+
+func TestResumeRunErrorRendersParentRunDetail(t *testing.T) {
+	run := runstore.Run{
+		ID:           "run-parent-1",
+		Status:       runstore.StatusSuccess,
+		Owner:        "ac",
+		Repo:         "demo",
+		TicketKind:   "issue",
+		TicketNumber: 7,
+		Branch:       "forge-ai/ac/demo/issue-7",
+		BaseBranch:   "main",
+		AgentMention: "@codex",
+	}
+	store := &memoryStore{run: run}
+	handler := New(config.Config{
+		ForgejoURL:    "https://forgejo.example.test",
+		MaxConcurrent: 1,
+		Agents:        []config.AgentRoute{{Mention: "@codex"}},
+	}, store, slog.New(slog.NewTextHandler(io.Discard, nil))).WithResumer(failingResumer{})
+	mux := http.NewServeMux()
+	handler.Register(mux)
+
+	body := strings.NewReader("agent_mention=@codex&workspace_mode=same_branch_fresh_workspace&prompt=continue")
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/runs/"+run.ID+"/resume", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	gotBody := rec.Body.String()
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST resume status = %d, want %d\n%s", rec.Code, http.StatusBadRequest, gotBody)
+	}
+	if !strings.Contains(gotBody, "/dashboard/runs/"+run.ID+"/events") {
+		t.Fatalf("resume error body missing parent events URL:\n%s", gotBody)
+	}
+	if strings.Contains(gotBody, "/dashboard/runs//events") || strings.Contains(gotBody, "/dashboard/runs//resume") {
+		t.Fatalf("resume error body contains empty run URL:\n%s", gotBody)
+	}
+	if !strings.Contains(gotBody, "Resume failed: resume failed") {
+		t.Fatalf("resume error body missing error message:\n%s", gotBody)
 	}
 }
 

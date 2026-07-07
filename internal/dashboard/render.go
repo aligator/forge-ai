@@ -37,6 +37,7 @@ type pageData struct {
 	Direction   string
 	Error       string
 	Partial     bool
+	CanResume   bool
 	GeneratedAt time.Time
 }
 
@@ -93,6 +94,8 @@ func (h *Handler) baseData(r *http.Request, title, active string) pageData {
 		ModeLabel:   mode,
 		Health:      h.health(r.Context()),
 		Runtime:     snap,
+		Agents:      h.cfg.Agents,
+		CanResume:   h.resumer != nil,
 		GeneratedAt: time.Now().UTC(),
 	}
 }
