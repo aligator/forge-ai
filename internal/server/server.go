@@ -35,6 +35,9 @@ func New(cfg config.Config, workflow Workflow, dashboardStore dashboard.Store, l
 	if r, ok := workflow.(dashboard.ManualResumer); ok {
 		dh.WithResumer(r)
 	}
+	if actions, ok := workflow.(dashboard.OperatorActions); ok {
+		dh.WithOperatorActions(actions)
+	}
 	dh.Register(mux)
 	return mux
 }

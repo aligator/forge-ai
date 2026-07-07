@@ -22,12 +22,15 @@ type memoryStore struct {
 	events  []runstore.Event
 	logs    []runstore.LogChunk
 	links   []runstore.Link
+	audit   []runstore.AuditEvent
 	lastOpt runstore.ListRunsOptions
 }
 
 type failingResumer struct {
 	cancelOK bool
 }
+
+type noopActions struct{}
 
 func (r failingResumer) ManualResume(context.Context, string, string, string, string, string, string) (string, error) {
 	return "", errors.New("resume failed")
@@ -36,6 +39,18 @@ func (r failingResumer) ManualResume(context.Context, string, string, string, st
 func (r failingResumer) CancelRun(string) bool {
 	return r.cancelOK
 }
+
+func (noopActions) CancelRunAs(context.Context, string, string) bool {
+	return true
+}
+
+func (noopActions) RetryRun(context.Context, string, string) (string, error) {
+	return "retry-run", nil
+}
+
+func (noopActions) PauseQueue(context.Context, string) {}
+
+func (noopActions) ResumeQueue(context.Context, string) {}
 
 func (s *memoryStore) ListRuns(_ context.Context, opts runstore.ListRunsOptions) ([]runstore.Run, error) {
 	s.lastOpt = opts
@@ -77,6 +92,10 @@ func filterSince[T any](items []T, sinceID int64, id func(T) int64) []T {
 
 func (s *memoryStore) ListLinks(context.Context, string) ([]runstore.Link, error) {
 	return s.links, nil
+}
+
+func (s *memoryStore) ListAuditEvents(context.Context, runstore.ListAuditEventsOptions) ([]runstore.AuditEvent, error) {
+	return s.audit, nil
 }
 
 func TestRunEventsStreamsStoredEventsAndLogs(t *testing.T) {
@@ -225,6 +244,61 @@ func TestRunDetailRendersContextLinksAndRedactedLogs(t *testing.T) {
 	}
 	if strings.Contains(body, "abc123456789") || !strings.Contains(body, "&lt;redacted&gt;") {
 		t.Fatalf("detail body did not redact secret:\n%s", body)
+	}
+}
+
+func TestRunDetailShowsOnlyValidOperatorActions(t *testing.T) {
+	tests := []struct {
+		name         string
+		status       runstore.Status
+		wantCancel   bool
+		wantRetry    bool
+		unwantCancel bool
+		unwantRetry  bool
+	}{
+		{name: "running", status: runstore.StatusRunning, wantCancel: true, unwantRetry: true},
+		{name: "failed", status: runstore.StatusFailed, wantRetry: true, unwantCancel: true},
+		{name: "success", status: runstore.StatusSuccess, unwantCancel: true, unwantRetry: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			run := runstore.Run{
+				ID:           "run-" + tt.name,
+				Status:       tt.status,
+				Owner:        "ac",
+				Repo:         "demo",
+				TicketKind:   "issue",
+				TicketNumber: 7,
+				Branch:       "work",
+				BaseBranch:   "main",
+				AgentMention: "@codex",
+			}
+			store := &memoryStore{run: run}
+			handler := New(config.Config{MaxConcurrent: 1}, store, slog.New(slog.NewTextHandler(io.Discard, nil))).WithOperatorActions(noopActions{})
+			mux := http.NewServeMux()
+			handler.Register(mux)
+
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dashboard/runs/"+run.ID, nil))
+			body := rec.Body.String()
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET detail status = %d, want %d\n%s", rec.Code, http.StatusOK, body)
+			}
+			hasCancel := strings.Contains(body, "/dashboard/runs/"+run.ID+"/cancel")
+			hasRetry := strings.Contains(body, "/dashboard/runs/"+run.ID+"/retry")
+			if hasCancel != tt.wantCancel {
+				t.Fatalf("cancel action visible = %t, want %t\n%s", hasCancel, tt.wantCancel, body)
+			}
+			if hasRetry != tt.wantRetry {
+				t.Fatalf("retry action visible = %t, want %t\n%s", hasRetry, tt.wantRetry, body)
+			}
+			if tt.unwantCancel && hasCancel {
+				t.Fatalf("cancel action unexpectedly visible:\n%s", body)
+			}
+			if tt.unwantRetry && hasRetry {
+				t.Fatalf("retry action unexpectedly visible:\n%s", body)
+			}
+		})
 	}
 }
 

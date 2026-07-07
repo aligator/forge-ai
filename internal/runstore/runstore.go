@@ -35,6 +35,7 @@ type RunStore interface {
 	AddEvent(context.Context, EventInput) error
 	AddLogChunk(context.Context, LogChunkInput) error
 	AddLink(context.Context, LinkInput) error
+	AddAuditEvent(context.Context, AuditEventInput) error
 }
 
 type ListRunsOptions struct {
@@ -104,6 +105,19 @@ type LinkInput struct {
 	Label string
 }
 
+type AuditEventInput struct {
+	Time       time.Time
+	Actor      string
+	Action     string
+	TargetType string
+	TargetID   string
+	DataJSON   string
+}
+
+type ListAuditEventsOptions struct {
+	Limit int
+}
+
 type Event struct {
 	ID       int64
 	RunID    string
@@ -127,6 +141,16 @@ type Link struct {
 	Type  string
 	URL   string
 	Label string
+}
+
+type AuditEvent struct {
+	ID         int64
+	Time       time.Time
+	Actor      string
+	Action     string
+	TargetType string
+	TargetID   string
+	DataJSON   string
 }
 
 func validateStatusTransition(from, to Status) error {

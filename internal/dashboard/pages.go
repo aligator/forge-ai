@@ -71,12 +71,12 @@ func (h *Handler) agents(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) audit(w http.ResponseWriter, r *http.Request) {
 	data := h.baseData(r, "Audit", "audit")
 	if h.store != nil {
-		runs, err := h.store.ListRuns(r.Context(), runstore.ListRunsOptions{Limit: 20})
+		events, err := h.store.ListAuditEvents(r.Context(), runstore.ListAuditEventsOptions{Limit: 100})
 		if err != nil {
 			data.Error = "Audit data is currently unavailable."
 			h.logger.Warn("dashboard audit list failed", "error", err)
 		} else {
-			data.Runs = runs
+			data.AuditEvents = events
 		}
 	}
 	h.render(w, r, "audit", data)

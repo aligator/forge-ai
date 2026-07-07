@@ -25,6 +25,7 @@ type Store interface {
 	ListLogChunks(context.Context, string) ([]runstore.LogChunk, error)
 	ListLogChunksSince(context.Context, string, int64) ([]runstore.LogChunk, error)
 	ListLinks(context.Context, string) ([]runstore.Link, error)
+	ListAuditEvents(context.Context, runstore.ListAuditEventsOptions) ([]runstore.AuditEvent, error)
 }
 
 // ManualResumer is implemented by service.Service and enables the dashboard to
@@ -34,11 +35,19 @@ type ManualResumer interface {
 	CancelRun(id string) bool
 }
 
+type OperatorActions interface {
+	CancelRunAs(ctx context.Context, id, actor string) bool
+	RetryRun(ctx context.Context, parentRunID, actor string) (string, error)
+	PauseQueue(ctx context.Context, actor string)
+	ResumeQueue(ctx context.Context, actor string)
+}
+
 type Handler struct {
 	cfg      config.Config
 	store    Store
 	runtime  RuntimeSnapshotter
 	resumer  ManualResumer
+	actions  OperatorActions
 	logger   *slog.Logger
 	tmpl     *template.Template
 	redactor dashboardRedactor
@@ -85,6 +94,11 @@ func (h *Handler) WithResumer(r ManualResumer) *Handler {
 	return h
 }
 
+func (h *Handler) WithOperatorActions(actions OperatorActions) *Handler {
+	h.actions = actions
+	return h
+}
+
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /dashboard/assets/app.css", h.styles)
 	mux.Handle("GET /dashboard/assets/htmx.min.js", http.StripPrefix("/dashboard", http.FileServerFS(assetsFS)))
@@ -93,7 +107,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /dashboard/runs/{id}", h.runDetail)
 	mux.HandleFunc("GET /dashboard/runs/{id}/events", h.runEvents)
 	mux.HandleFunc("POST /dashboard/runs/{id}/resume", h.resumeRun)
+	mux.HandleFunc("POST /dashboard/runs/{id}/cancel", h.cancelRun)
+	mux.HandleFunc("POST /dashboard/runs/{id}/retry", h.retryRun)
 	mux.HandleFunc("POST /dashboard/runs/{id}/stop", h.stopRun)
+	mux.HandleFunc("POST /dashboard/queue/pause", h.pauseQueue)
+	mux.HandleFunc("POST /dashboard/queue/resume", h.resumeQueue)
 	mux.HandleFunc("GET /dashboard/agents", h.agents)
 	mux.HandleFunc("GET /dashboard/audit", h.audit)
 }

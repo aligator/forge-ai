@@ -88,10 +88,20 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			url TEXT NOT NULL,
 			label TEXT NOT NULL DEFAULT ''
 		)`,
+		`CREATE TABLE IF NOT EXISTS audit_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			ts TEXT NOT NULL,
+			actor TEXT NOT NULL,
+			action TEXT NOT NULL,
+			target_type TEXT NOT NULL,
+			target_id TEXT NOT NULL,
+			data_json TEXT NOT NULL DEFAULT ''
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_runs_ticket ON runs(owner, repo, ticket_kind, ticket_number)`,
 		`CREATE INDEX IF NOT EXISTS idx_run_events_run_id ON run_events(run_id, id)`,
 		`CREATE INDEX IF NOT EXISTS idx_run_logs_run_id ON run_logs(run_id, id)`,
 		`CREATE INDEX IF NOT EXISTS idx_run_links_run_id ON run_links(run_id, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_events_ts ON audit_events(ts, id)`,
 	}
 	for _, stmt := range statements {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
@@ -215,6 +225,18 @@ func (s *SQLiteStore) AddLink(ctx context.Context, in LinkInput) error {
 	return nil
 }
 
+func (s *SQLiteStore) AddAuditEvent(ctx context.Context, in AuditEventInput) error {
+	if in.Time.IsZero() {
+		in.Time = time.Now().UTC()
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO audit_events (ts, actor, action, target_type, target_id, data_json) VALUES (?, ?, ?, ?, ?, ?)`,
+		formatTime(in.Time), in.Actor, in.Action, in.TargetType, in.TargetID, in.DataJSON)
+	if err != nil {
+		return fmt.Errorf("add audit event: %w", err)
+	}
+	return nil
+}
+
 func (s *SQLiteStore) GetRun(ctx context.Context, id string) (Run, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT id, kind, status, owner, repo, ticket_kind, ticket_number, branch, base_branch,
 		agent_mention, agent_type, session_id, parent_run_id, started_at, finished_at, error, created_by
@@ -334,6 +356,29 @@ func (s *SQLiteStore) ListLinks(ctx context.Context, runID string) ([]Link, erro
 		links = append(links, l)
 	}
 	return links, rows.Err()
+}
+
+func (s *SQLiteStore) ListAuditEvents(ctx context.Context, opts ListAuditEventsOptions) ([]AuditEvent, error) {
+	limit := opts.Limit
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, ts, actor, action, target_type, target_id, data_json FROM audit_events ORDER BY ts DESC, id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list audit events: %w", err)
+	}
+	defer rows.Close()
+	var events []AuditEvent
+	for rows.Next() {
+		var event AuditEvent
+		var ts string
+		if err := rows.Scan(&event.ID, &ts, &event.Actor, &event.Action, &event.TargetType, &event.TargetID, &event.DataJSON); err != nil {
+			return nil, err
+		}
+		event.Time = parseTime(ts)
+		events = append(events, event)
+	}
+	return events, rows.Err()
 }
 
 type runScanner interface {

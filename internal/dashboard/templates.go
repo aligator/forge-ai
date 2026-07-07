@@ -133,6 +133,13 @@ const templates = `
 	<div class="topbar__meta">
 		<span class="pill">{{.Runtime.UsedSlots}}/{{.Runtime.MaxConcurrent}} slots</span>
 		<span class="pill">Paused: {{if .Runtime.Paused}}yes{{else}}no{{end}}</span>
+		{{if .CanOperate}}
+		{{if .Runtime.Paused}}
+		<form method="post" action="/dashboard/queue/resume" class="inline-form"><button type="submit" class="button button--small">Resume queue</button></form>
+		{{else}}
+		<form method="post" action="/dashboard/queue/pause" class="inline-form"><button type="submit" class="button button--small" onclick="return confirm('Pause the queue? Running runs will continue.')">Pause queue</button></form>
+		{{end}}
+		{{end}}
 		<a class="pill pill--link" href="{{.ForgejoURL}}">Forgejo</a>
 		<span class="pill">{{.ModeLabel}}</span>
 	</div>
@@ -263,9 +270,14 @@ const templates = `
 	</div>
 	<div class="page-head-actions">
 		<span data-run-status class="{{statusClass .Run.Status}}">{{.Run.Status}}</span>
-		{{if and .CanResume (or (eq (print .Run.Status) "running") (eq (print .Run.Status) "queued"))}}
-		<form method="post" action="/dashboard/runs/{{.Run.ID}}/stop">
-			<button type="submit" class="button button--danger button--small">Stop run</button>
+		{{if .CanCancel}}
+		<form method="post" action="/dashboard/runs/{{.Run.ID}}/cancel">
+			<button type="submit" class="button button--danger button--small" onclick="return confirm('Cancel this run?')">Cancel run</button>
+		</form>
+		{{end}}
+		{{if .CanRetry}}
+		<form method="post" action="/dashboard/runs/{{.Run.ID}}/retry">
+			<button type="submit" class="button button--small" onclick="return confirm('Retry this run with the same Forgejo context?')">Retry run</button>
 		</form>
 		{{end}}
 	</div>
@@ -432,11 +444,30 @@ const templates = `
 <section class="page-head">
 	<div>
 		<h1>Audit</h1>
-		<p>Recent run records for operational traceability.</p>
+		<p>Persisted operator actions.</p>
 	</div>
 </section>
 {{template "error" .}}
-{{if .Runs}}{{template "runs_table" .}}{{else}}{{template "empty_runs" .}}{{end}}
+{{if .AuditEvents}}
+<div class="table-wrap">
+	<table>
+		<thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Data</th></tr></thead>
+		<tbody>
+			{{range .AuditEvents}}
+			<tr>
+				<td>{{formatTime .Time}}</td>
+				<td>{{.Actor}}</td>
+				<td class="mono">{{.Action}}</td>
+				<td>{{.TargetType}} <span class="mono">{{.TargetID}}</span></td>
+				<td class="mono">{{.DataJSON}}</td>
+			</tr>
+			{{end}}
+		</tbody>
+	</table>
+</div>
+{{else}}
+<div class="empty-state"><h2>No audit events found</h2><p>Operator actions will appear here after they run.</p></div>
+{{end}}
 {{end}}
 
 {{define "error"}}

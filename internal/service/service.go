@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"time"
 
 	"codeberg.org/forge-ai/internal/agent"
 	"codeberg.org/forge-ai/internal/config"
@@ -65,7 +66,7 @@ func New(options Options) *Service {
 		runStore:       options.RunStore,
 		logger:         options.Logger,
 	}
-	return &Service{
+	svc := &Service{
 		runtime: rt,
 		cancels: make(map[string]context.CancelFunc),
 		handler: &webhookHandler{
@@ -78,6 +79,8 @@ func New(options Options) *Service {
 			logger:         options.Logger,
 		},
 	}
+	runner.service = svc
+	return svc
 }
 
 func (s *Service) Handle(ctx context.Context, event string, payload forgejo.WebhookPayload) error {
@@ -97,6 +100,10 @@ func (s *Service) Resume() {
 }
 
 func (s *Service) CancelRun(id string) bool {
+	return s.cancelRun(id)
+}
+
+func (s *Service) cancelRun(id string) bool {
 	s.cancelMu.Lock()
 	cancel, ok := s.cancels[id]
 	s.cancelMu.Unlock()
@@ -105,4 +112,59 @@ func (s *Service) CancelRun(id string) bool {
 		return true
 	}
 	return s.runtime.CancelRun(id)
+}
+
+func (s *Service) registerCancel(id string, cancel context.CancelFunc) {
+	if id == "" || cancel == nil {
+		return
+	}
+	s.cancelMu.Lock()
+	s.cancels[id] = cancel
+	s.cancelMu.Unlock()
+}
+
+func (s *Service) unregisterCancel(id string) {
+	if id == "" {
+		return
+	}
+	s.cancelMu.Lock()
+	delete(s.cancels, id)
+	s.cancelMu.Unlock()
+}
+
+func (s *Service) CancelRunAs(ctx context.Context, id, actor string) bool {
+	ok := s.cancelRun(id)
+	if ok {
+		s.audit(ctx, actor, "run.cancel", "run", id, "")
+	}
+	return ok
+}
+
+func (s *Service) PauseQueue(ctx context.Context, actor string) {
+	s.runtime.Pause()
+	s.audit(ctx, actor, "queue.pause", "queue", "default", "")
+}
+
+func (s *Service) ResumeQueue(ctx context.Context, actor string) {
+	s.runtime.Resume()
+	s.audit(ctx, actor, "queue.resume", "queue", "default", "")
+}
+
+func (s *Service) audit(ctx context.Context, actor, action, targetType, targetID, dataJSON string) {
+	if s.handler == nil || s.handler.runner == nil || s.handler.runner.runStore == nil {
+		return
+	}
+	if actor == "" {
+		actor = "internal"
+	}
+	if err := s.handler.runner.runStore.AddAuditEvent(ctx, runstore.AuditEventInput{
+		Time:       time.Now().UTC(),
+		Actor:      actor,
+		Action:     action,
+		TargetType: targetType,
+		TargetID:   targetID,
+		DataJSON:   dataJSON,
+	}); err != nil && s.handler.logger != nil {
+		s.handler.logger.Warn("record audit event failed", "action", action, "target_type", targetType, "target_id", targetID, "error", err)
+	}
 }
