@@ -19,7 +19,7 @@ type agentSettingsAuditData struct {
 	Model       string   `json:"model,omitempty"`
 	Args        []string `json:"args,omitempty"`
 	Timeout     string   `json:"timeout"`
-	ToolHints   bool     `json:"tool_hints"`
+	ToolHints   string   `json:"tool_hints,omitempty"`
 	AllowGit    bool     `json:"allow_git,omitempty"`
 	AllowGitSet bool     `json:"allow_git_set"`
 }
@@ -143,8 +143,16 @@ func (h *Handler) containsDisallowedSecret(value string) bool {
 		return true
 	}
 	lower := strings.ToLower(value)
-	for _, marker := range []string{"api_key", "apikey", "access_token", "auth_token", "bearer ", "password", "secret", "token"} {
+	for _, marker := range []string{"api_key=", "api_key:", "apikey=", "apikey:", "access_token=", "access_token:", "auth_token=", "auth_token:", "bearer ", "password=", "password:", "secret=", "secret:", "token=", "token:"} {
 		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	for _, field := range strings.Fields(lower) {
+		field = strings.TrimLeft(field, "-/")
+		field = strings.TrimRight(field, "=:")
+		switch field {
+		case "api_key", "apikey", "access_token", "auth_token", "password", "secret", "token":
 			return true
 		}
 	}
@@ -157,7 +165,7 @@ func (h *Handler) auditAgentSettingsChange(r *http.Request, settings runstore.Ag
 		Model:       settings.Model,
 		Args:        settings.Args,
 		Timeout:     settings.Timeout.String(),
-		ToolHints:   settings.ToolHints != "",
+		ToolHints:   h.redactor.Redact(settings.ToolHints),
 		AllowGit:    settings.AllowGit,
 		AllowGitSet: settings.AllowGitSet,
 	}
