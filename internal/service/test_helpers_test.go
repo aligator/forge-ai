@@ -220,6 +220,10 @@ func (s *recordingRunStore) AddAuditEvent(_ context.Context, in runstore.AuditEv
 	return nil
 }
 
+func (s *recordingRunStore) DeleteAgentSettings(context.Context, string) error {
+	return nil
+}
+
 func (s *recordingRunStore) hasEvent(eventType string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

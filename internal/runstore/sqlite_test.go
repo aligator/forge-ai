@@ -178,6 +178,12 @@ func TestSQLiteStorePersistsAgentSettings(t *testing.T) {
 	if len(all) != 1 || all[0].Mention != "@codex" {
 		t.Fatalf("all settings = %+v", all)
 	}
+	if err := reopened.DeleteAgentSettings(ctx, "@codex"); err != nil {
+		t.Fatalf("DeleteAgentSettings() error = %v", err)
+	}
+	if _, err := reopened.GetAgentSettings(ctx, "@codex"); !errors.Is(err, ErrAgentSettingsNotFound) {
+		t.Fatalf("GetAgentSettings() after delete error = %v, want %v", err, ErrAgentSettingsNotFound)
+	}
 }
 
 func TestSQLiteStoreRejectsInvalidStatusTransition(t *testing.T) {

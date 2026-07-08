@@ -48,6 +48,7 @@ type agentListItem struct {
 	CommandPreview  string
 	Timeout         time.Duration
 	SettingsAction  string
+	ResetAction     string
 	Enabled         bool
 	Model           string
 	ArgsInput       string
@@ -286,6 +287,7 @@ func (h *Handler) agentListItem(index int, route config.AgentRoute, settings run
 		CommandPreview:  h.safePreview(commandPreview(command)),
 		Timeout:         effective.Timeout,
 		SettingsAction:  "/dashboard/agents/" + url.PathEscape(route.Mention) + "/settings",
+		ResetAction:     "/dashboard/agents/" + url.PathEscape(route.Mention) + "/settings/reset",
 		Enabled:         effective.Enabled,
 		Model:           modelInput,
 		ArgsInput:       argsInput,

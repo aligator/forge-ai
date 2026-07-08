@@ -176,6 +176,13 @@ func (s *memoryStore) UpsertAgentSettings(_ context.Context, in runstore.UpsertA
 	return settings, nil
 }
 
+func (s *memoryStore) DeleteAgentSettings(_ context.Context, mention string) error {
+	if s.settings != nil {
+		delete(s.settings, mention)
+	}
+	return nil
+}
+
 func TestRunEventsStreamsStoredEventsAndLogs(t *testing.T) {
 	store := memoryStore{
 		run: runstore.Run{ID: "run-1", Status: runstore.StatusRunning},
@@ -418,6 +425,44 @@ func TestSaveAgentSettingsPersistsAndAuditsSafeValues(t *testing.T) {
 	}
 	if len(store.audit) != 1 || store.audit[0].Action != "agent_settings.update" || store.audit[0].TargetID != "@codex" || store.audit[0].Actor != "operator" {
 		t.Fatalf("audit = %+v", store.audit)
+	}
+}
+
+func TestResetAgentSettingsDeletesOverrideAndAudits(t *testing.T) {
+	store := &memoryStore{
+		settings: map[string]runstore.AgentSettings{
+			"@codex": {
+				Mention: "@codex",
+				Enabled: true,
+				Model:   "gpt-test",
+				Timeout: 45 * time.Minute,
+			},
+		},
+	}
+	cfg := config.Config{
+		MaxConcurrent: 1,
+		Agents:        []config.AgentRoute{{Mention: "@codex", User: "codex", Agent: config.AgentConfig{Timeout: 30 * time.Minute}}},
+	}
+	handler := New(cfg, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	mux := http.NewServeMux()
+	handler.Register(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/agents/%40codex/settings/reset", nil)
+	req.Header.Set("X-Forwarded-User", "operator")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST reset settings status = %d, want %d\n%s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	if _, ok := store.settings["@codex"]; ok {
+		t.Fatalf("settings were not deleted: %+v", store.settings)
+	}
+	if len(store.audit) != 1 || store.audit[0].Action != "agent_settings.reset" || store.audit[0].TargetID != "@codex" || store.audit[0].Actor != "operator" {
+		t.Fatalf("audit = %+v", store.audit)
+	}
+	if store.audit[0].DataJSON != `{"source":"env"}` {
+		t.Fatalf("audit data = %s", store.audit[0].DataJSON)
 	}
 }
 

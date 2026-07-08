@@ -209,6 +209,7 @@ tbody tr:hover { background: #fbfcfd; }
 .agent-list { display: grid; gap: 16px; }
 .agent-card__grid { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 18px; }
 .agent-card__side { display: grid; gap: 10px; align-content: start; }
+.agent-reset-form { gap: 10px; align-items: center; margin-top: 12px; }
 .agent-form {
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));

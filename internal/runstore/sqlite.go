@@ -295,6 +295,14 @@ func (s *SQLiteStore) GetAgentSettings(ctx context.Context, mention string) (Age
 	return settings, err
 }
 
+func (s *SQLiteStore) DeleteAgentSettings(ctx context.Context, mention string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM agent_settings WHERE agent_mention = ?`, mention)
+	if err != nil {
+		return fmt.Errorf("delete agent settings: %w", err)
+	}
+	return nil
+}
+
 func (s *SQLiteStore) ListAgentSettings(ctx context.Context) ([]AgentSettings, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT agent_mention, enabled, model, args_json, timeout_seconds, tool_hints, allow_git, updated_at, updated_by
 		FROM agent_settings ORDER BY agent_mention`)

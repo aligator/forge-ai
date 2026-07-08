@@ -58,6 +58,33 @@ func (h *Handler) saveAgentSettings(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/dashboard/agents?saved="+mention, http.StatusSeeOther)
 }
 
+func (h *Handler) resetAgentSettings(w http.ResponseWriter, r *http.Request) {
+	if h.store == nil {
+		http.Error(w, "run store not configured", http.StatusServiceUnavailable)
+		return
+	}
+	mention := r.PathValue("mention")
+	if _, ok := h.routeForMention(mention); !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if err := h.store.DeleteAgentSettings(r.Context(), mention); err != nil {
+		data := h.baseData(r, "Agents", "agents")
+		data.Error = "Agent settings could not be reset."
+		h.logger.Warn("dashboard reset agent settings failed", "mention", mention, "error", err)
+		h.renderStatus(w, r, http.StatusInternalServerError, "agents", data)
+		return
+	}
+	if err := h.auditAgentSettingsReset(r, mention); err != nil {
+		data := h.baseData(r, "Agents", "agents")
+		data.Error = "Agent settings were reset, but audit logging failed."
+		h.logger.Warn("dashboard audit agent settings reset failed", "mention", mention, "error", err)
+		h.renderStatus(w, r, http.StatusInternalServerError, "agents", data)
+		return
+	}
+	http.Redirect(w, r, "/dashboard/agents?reset="+mention, http.StatusSeeOther)
+}
+
 func (h *Handler) parseAgentSettingsForm(r *http.Request, mention string) (runstore.UpsertAgentSettingsInput, error) {
 	if err := r.ParseForm(); err != nil {
 		return runstore.UpsertAgentSettingsInput{}, fmt.Errorf("parse form: %w", err)
@@ -143,6 +170,16 @@ func (h *Handler) auditAgentSettingsChange(r *http.Request, settings runstore.Ag
 		TargetType: "agent",
 		TargetID:   settings.Mention,
 		DataJSON:   string(dataJSON),
+	})
+}
+
+func (h *Handler) auditAgentSettingsReset(r *http.Request, mention string) error {
+	return h.store.AddAuditEvent(r.Context(), runstore.AuditEventInput{
+		Actor:      actorFromRequest(r),
+		Action:     "agent_settings.reset",
+		TargetType: "agent",
+		TargetID:   mention,
+		DataJSON:   `{"source":"env"}`,
 	})
 }
 

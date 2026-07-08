@@ -37,6 +37,7 @@ type RunStore interface {
 	AddLogChunk(context.Context, LogChunkInput) error
 	AddLink(context.Context, LinkInput) error
 	AddAuditEvent(context.Context, AuditEventInput) error
+	DeleteAgentSettings(context.Context, string) error
 }
 
 type ListRunsOptions struct {

@@ -415,7 +415,7 @@ const templates = `
 <section class="page-head">
 	<div>
 		<h1>Agents</h1>
-		<p>Safe defaults only. Secrets stay in environment or secret storage. Saved changes apply after restart.</p>
+		<p>Env config defines agents and secrets. Saved dashboard values are non-secret overrides and apply after restart.</p>
 	</div>
 </section>
 {{template "error" .}}
@@ -450,6 +450,7 @@ const templates = `
 			<dt>Args</dt><dd>{{template "command_preview" .ArgsPreview}}</dd>
 			<dt>Preview</dt><dd>{{template "command_preview" .CommandPreview}}</dd>
 			<dt>Timeout</dt><dd>{{.Timeout}}</dd>
+			<dt>Source</dt><dd>{{if .Persisted}}dashboard override{{else}}env config{{end}}</dd>
 			<dt>Effect</dt><dd>Restart required</dd>
 			{{if .Persisted}}<dt>Saved</dt><dd>{{formatTime .UpdatedAt}} by {{.UpdatedBy}}</dd>{{end}}
 		</dl>
@@ -484,6 +485,12 @@ const templates = `
 			<span class="muted">Token, password, API key, and secret values are rejected before saving.</span>
 		</div>
 	</form>
+	{{if .Persisted}}
+	<form class="inline-form agent-reset-form" method="post" action="{{.ResetAction}}">
+		<button class="button button--danger" type="submit">Reset to env config</button>
+		<span class="muted">Removes the dashboard override for this agent.</span>
+	</form>
+	{{end}}
 </article>
 {{end}}
 

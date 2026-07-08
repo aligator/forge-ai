@@ -74,6 +74,10 @@ func (s stubDashboardStore) UpsertAgentSettings(context.Context, runstore.Upsert
 	return runstore.AgentSettings{}, nil
 }
 
+func (s stubDashboardStore) DeleteAgentSettings(context.Context, string) error {
+	return nil
+}
+
 func TestNewRegistersDashboardWithoutDisturbingExistingRoutes(t *testing.T) {
 	handler := New(config.Config{
 		ForgejoURL:    "https://forgejo.example.test",

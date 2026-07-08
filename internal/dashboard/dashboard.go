@@ -29,6 +29,7 @@ type Store interface {
 	AddAuditEvent(context.Context, runstore.AuditEventInput) error
 	GetAgentSettings(context.Context, string) (runstore.AgentSettings, error)
 	UpsertAgentSettings(context.Context, runstore.UpsertAgentSettingsInput) (runstore.AgentSettings, error)
+	DeleteAgentSettings(context.Context, string) error
 }
 
 // ManualResumer is implemented by service.Service and enables the dashboard to
@@ -118,5 +119,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /dashboard/queue/resume", h.resumeQueue)
 	mux.HandleFunc("GET /dashboard/agents", h.agents)
 	mux.HandleFunc("POST /dashboard/agents/{mention}/settings", h.saveAgentSettings)
+	mux.HandleFunc("POST /dashboard/agents/{mention}/settings/reset", h.resetAgentSettings)
 	mux.HandleFunc("GET /dashboard/audit", h.audit)
 }
