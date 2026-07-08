@@ -48,6 +48,9 @@ Done: write one-line conventional commit msg to ".forge-ai-commit-msg". No commi
 func sessionIDFromInstruction(instruction string, routes []config.AgentRoute) string {
 	lower := strings.ToLower(instruction)
 	for _, route := range routes {
+		if route.Disabled {
+			continue
+		}
 		mention := strings.ToLower(route.Mention)
 		idx := strings.Index(lower, mention)
 		if idx < 0 {

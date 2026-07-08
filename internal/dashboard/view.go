@@ -47,7 +47,18 @@ type agentListItem struct {
 	ArgsPreview     string
 	CommandPreview  string
 	Timeout         time.Duration
+	SettingsAction  string
+	ResetAction     string
+	Enabled         bool
+	Model           string
+	ArgsInput       string
+	TimeoutInput    string
+	ToolHints       string
+	AllowGitSet     bool
 	AllowGit        bool
+	Persisted       bool
+	UpdatedBy       string
+	UpdatedAt       time.Time
 	TokenPresent    bool
 	PasswordPresent bool
 	Validation      []validationResult
@@ -230,29 +241,87 @@ func (h *Handler) agentContext(run runstore.Run) agentContext {
 	return ctx
 }
 
-func (h *Handler) agentList() []agentListItem {
+func (h *Handler) agentList(ctx context.Context) []agentListItem {
 	items := make([]agentListItem, 0, len(h.cfg.Agents))
 	for i, route := range h.cfg.Agents {
-		items = append(items, h.agentListItem(i, route))
+		var settings runstore.AgentSettings
+		if h.store != nil {
+			if stored, err := h.store.GetAgentSettings(ctx, route.Mention); err == nil {
+				settings = stored
+			}
+		}
+		items = append(items, h.agentListItem(i, route, settings))
 	}
 	return items
 }
 
-func (h *Handler) agentListItem(index int, route config.AgentRoute) agentListItem {
+func (h *Handler) agentListItem(index int, route config.AgentRoute, settings runstore.AgentSettings) agentListItem {
+	effective := agentSettingsFromRoute(route, h.cfg.AgentToolHints, h.cfg.AgentAllowGit)
+	persisted := settings.Mention != ""
+	if persisted {
+		effective = settings
+	}
+	command := route.Agent
+	command.Args = effective.Args
+	command.Timeout = effective.Timeout
+	argsInput := strings.Join(effective.Args, " ")
+	modelInput := effective.Model
+	toolHintsInput := effective.ToolHints
+	if !persisted {
+		if h.containsDisallowedSecret(argsInput) {
+			argsInput = ""
+		}
+		if h.containsDisallowedSecret(modelInput) {
+			modelInput = ""
+		}
+		if h.containsDisallowedSecret(toolHintsInput) {
+			toolHintsInput = ""
+		}
+	}
 	item := agentListItem{
 		Mention:         route.Mention,
 		User:            route.User,
 		Type:            firstNonEmpty(route.Agent.Type, agentBinName(route.Agent)),
 		Bin:             route.Agent.Bin,
-		ArgsPreview:     h.safePreview(strings.Join(route.Agent.Args, " ")),
-		CommandPreview:  h.safePreview(commandPreview(route.Agent)),
-		Timeout:         route.Agent.Timeout,
-		AllowGit:        h.cfg.AgentAllowGit,
+		ArgsPreview:     h.safePreview(strings.Join(effective.Args, " ")),
+		CommandPreview:  h.safePreview(commandPreview(command)),
+		Timeout:         effective.Timeout,
+		SettingsAction:  "/dashboard/agents/" + url.PathEscape(route.Mention) + "/settings",
+		ResetAction:     "/dashboard/agents/" + url.PathEscape(route.Mention) + "/settings/reset",
+		Enabled:         effective.Enabled,
+		Model:           modelInput,
+		ArgsInput:       argsInput,
+		TimeoutInput:    effective.Timeout.String(),
+		ToolHints:       toolHintsInput,
+		AllowGitSet:     effective.AllowGitSet,
+		AllowGit:        effective.AllowGit,
+		Persisted:       persisted,
+		UpdatedBy:       settings.UpdatedBy,
+		UpdatedAt:       settings.UpdatedAt,
 		TokenPresent:    route.Token != "" || h.cfg.ForgejoToken != "",
 		PasswordPresent: route.Password != "",
 	}
 	item.Validation = h.agentValidation(index, route)
 	return item
+}
+
+func agentSettingsFromRoute(route config.AgentRoute, toolHints string, allowGit bool) runstore.AgentSettings {
+	if route.Agent.ToolHints != "" {
+		toolHints = route.Agent.ToolHints
+	}
+	if route.Agent.AllowGitSet {
+		allowGit = route.Agent.AllowGit
+	}
+	return runstore.AgentSettings{
+		Mention:     route.Mention,
+		Enabled:     !route.Disabled,
+		Model:       route.Agent.Model,
+		Args:        append([]string(nil), route.Agent.Args...),
+		Timeout:     route.Agent.Timeout,
+		ToolHints:   toolHints,
+		AllowGit:    allowGit,
+		AllowGitSet: route.Agent.AllowGitSet,
+	}
 }
 
 func (h *Handler) agentValidation(index int, route config.AgentRoute) []validationResult {

@@ -152,6 +152,9 @@ func (h *webhookHandler) forgejoFor(mention string) Forgejo {
 func (h *webhookHandler) shouldRun(payload forgejo.WebhookPayload, ticket forgejo.Ticket) bool {
 	lower := strings.ToLower(ticket.Instruction)
 	for _, route := range h.cfg.Agents {
+		if route.Disabled {
+			continue
+		}
 		if !strings.Contains(lower, strings.ToLower(route.Mention)) {
 			continue
 		}
@@ -173,6 +176,9 @@ func (h *webhookHandler) shouldRun(payload forgejo.WebhookPayload, ticket forgej
 func (h *webhookHandler) anyMentionIn(text string) bool {
 	lower := strings.ToLower(text)
 	for _, route := range h.cfg.Agents {
+		if route.Disabled {
+			continue
+		}
 		if strings.Contains(lower, strings.ToLower(route.Mention)) {
 			return true
 		}
@@ -185,6 +191,9 @@ func (h *webhookHandler) anyMentionIn(text string) bool {
 func (h *webhookHandler) findAgent(instruction string) (string, Agent) {
 	lower := strings.ToLower(instruction)
 	for _, route := range h.cfg.Agents {
+		if route.Disabled {
+			continue
+		}
 		if strings.Contains(lower, strings.ToLower(route.Mention)) {
 			key := strings.ToLower(route.Mention)
 			if ag, ok := h.agents[key]; ok {

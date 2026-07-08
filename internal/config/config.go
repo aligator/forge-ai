@@ -18,6 +18,7 @@ type AgentRoute struct {
 	Token    string // Forgejo token for this agent; empty = global token
 	Git      GitIdentity
 	Agent    AgentConfig
+	Disabled bool
 }
 
 type Config struct {
@@ -44,9 +45,13 @@ type Config struct {
 type AgentConfig struct {
 	Type            string
 	Bin             string
+	Model           string
 	Args            []string
 	CommandTemplate string
 	Timeout         time.Duration
+	ToolHints       string
+	AllowGit        bool
+	AllowGitSet     bool
 	ExtraEnv        []string // extra env vars injected into the agent subprocess (e.g. FORGEJO_ACCESS_TOKEN)
 }
 
@@ -135,6 +140,7 @@ func loadAgentRoutes(defaultGit GitIdentity) []AgentRoute {
 			Agent: AgentConfig{
 				Type:            os.Getenv(prefix + "TYPE"),
 				Bin:             os.Getenv(prefix + "BIN"),
+				Model:           os.Getenv(prefix + "MODEL"),
 				Args:            fields(os.Getenv(prefix + "ARGS")),
 				CommandTemplate: os.Getenv(prefix + "COMMAND"),
 				Timeout:         envDuration(prefix+"TIMEOUT", 30*time.Minute),

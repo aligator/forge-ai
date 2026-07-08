@@ -54,11 +54,19 @@ func main() {
 		}
 	}()
 	logger.Info("runstore ready", "path", cfg.RunStorePath)
+	if err := applyStoredAgentSettings(context.Background(), &cfg, store); err != nil {
+		logger.Error("load agent settings", "error", err)
+		os.Exit(1)
+	}
 
 	agents := make(map[string]service.Agent)
 	forgejoClients := make(map[string]service.Forgejo)
 	for i := range cfg.Agents {
 		route := &cfg.Agents[i]
+		if route.Disabled {
+			logger.Info("agent disabled by settings", "mention", route.Mention, "user", route.User)
+			continue
+		}
 		key := strings.ToLower(route.Mention)
 
 		if route.Token == "" && route.User != "" && route.Password != "" {
@@ -130,4 +138,32 @@ func main() {
 		logger.Error("shutdown failed", "error", err)
 		os.Exit(1)
 	}
+}
+
+func applyStoredAgentSettings(ctx context.Context, cfg *config.Config, store *runstore.SQLiteStore) error {
+	settings, err := store.ListAgentSettings(ctx)
+	if err != nil {
+		return err
+	}
+	byMention := make(map[string]runstore.AgentSettings, len(settings))
+	for _, item := range settings {
+		byMention[strings.ToLower(item.Mention)] = item
+	}
+	for i := range cfg.Agents {
+		route := &cfg.Agents[i]
+		setting, ok := byMention[strings.ToLower(route.Mention)]
+		if !ok {
+			continue
+		}
+		route.Disabled = !setting.Enabled
+		route.Agent.Model = setting.Model
+		route.Agent.Args = append([]string(nil), setting.Args...)
+		route.Agent.Timeout = setting.Timeout
+		route.Agent.ToolHints = setting.ToolHints
+		if setting.AllowGitSet {
+			route.Agent.AllowGit = setting.AllowGit
+			route.Agent.AllowGitSet = true
+		}
+	}
+	return nil
 }

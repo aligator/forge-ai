@@ -62,6 +62,22 @@ func (s stubDashboardStore) ListAuditEvents(context.Context, runstore.ListAuditE
 	return nil, nil
 }
 
+func (s stubDashboardStore) AddAuditEvent(context.Context, runstore.AuditEventInput) error {
+	return nil
+}
+
+func (s stubDashboardStore) GetAgentSettings(context.Context, string) (runstore.AgentSettings, error) {
+	return runstore.AgentSettings{}, runstore.ErrAgentSettingsNotFound
+}
+
+func (s stubDashboardStore) UpsertAgentSettings(context.Context, runstore.UpsertAgentSettingsInput) (runstore.AgentSettings, error) {
+	return runstore.AgentSettings{}, nil
+}
+
+func (s stubDashboardStore) DeleteAgentSettings(context.Context, string) error {
+	return nil
+}
+
 func TestNewRegistersDashboardWithoutDisturbingExistingRoutes(t *testing.T) {
 	handler := New(config.Config{
 		ForgejoURL:    "https://forgejo.example.test",
