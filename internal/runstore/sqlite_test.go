@@ -95,6 +95,39 @@ func TestSQLiteStorePersistsRunsEventsLogsAndLinks(t *testing.T) {
 	}
 }
 
+func TestSQLiteStorePersistsAuditEvents(t *testing.T) {
+	ctx := context.Background()
+	store, err := OpenSQLite(ctx, filepath.Join(t.TempDir(), "runstore.sqlite"))
+	if err != nil {
+		t.Fatalf("OpenSQLite() error = %v", err)
+	}
+	defer store.Close()
+
+	ts := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	if err := store.AddAuditEvent(ctx, AuditEventInput{
+		Time:       ts,
+		Actor:      "alice",
+		Action:     "run.cancel",
+		TargetType: "run",
+		TargetID:   "run-1",
+		DataJSON:   `{"reason":"operator"}`,
+	}); err != nil {
+		t.Fatalf("AddAuditEvent() error = %v", err)
+	}
+
+	events, err := store.ListAuditEvents(ctx, ListAuditEventsOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListAuditEvents() error = %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("audit events = %d, want 1", len(events))
+	}
+	got := events[0]
+	if got.Actor != "alice" || got.Action != "run.cancel" || got.TargetID != "run-1" || got.DataJSON != `{"reason":"operator"}` {
+		t.Fatalf("audit event = %+v", got)
+	}
+}
+
 func TestSQLiteStoreRejectsInvalidStatusTransition(t *testing.T) {
 	ctx := context.Background()
 	store, err := OpenSQLite(ctx, filepath.Join(t.TempDir(), "runstore.sqlite"))
@@ -124,6 +157,50 @@ func TestSQLiteStoreRejectsInvalidStatusTransition(t *testing.T) {
 	}
 	if got.Status != StatusQueued {
 		t.Fatalf("status = %s, want queued", got.Status)
+	}
+}
+
+func TestSQLiteStoreAllowsQueuedAndRunningCancelTransitions(t *testing.T) {
+	ctx := context.Background()
+	store, err := OpenSQLite(ctx, filepath.Join(t.TempDir(), "runstore.sqlite"))
+	if err != nil {
+		t.Fatalf("OpenSQLite() error = %v", err)
+	}
+	defer store.Close()
+
+	queued, err := store.CreateRun(ctx, CreateRunInput{
+		Owner:        "ac",
+		Repo:         "demo",
+		TicketKind:   "issue",
+		TicketNumber: 3,
+		Branch:       "queued",
+		BaseBranch:   "main",
+		AgentMention: "@codex",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun(queued) error = %v", err)
+	}
+	if err := store.UpdateRunStatus(ctx, queued.ID, StatusCanceled, time.Now(), "operator canceled"); err != nil {
+		t.Fatalf("UpdateRunStatus(queued->canceled) error = %v", err)
+	}
+
+	running, err := store.CreateRun(ctx, CreateRunInput{
+		Owner:        "ac",
+		Repo:         "demo",
+		TicketKind:   "issue",
+		TicketNumber: 4,
+		Branch:       "running",
+		BaseBranch:   "main",
+		AgentMention: "@codex",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun(running) error = %v", err)
+	}
+	if err := store.UpdateRunStatus(ctx, running.ID, StatusRunning, time.Time{}, ""); err != nil {
+		t.Fatalf("UpdateRunStatus(queued->running) error = %v", err)
+	}
+	if err := store.UpdateRunStatus(ctx, running.ID, StatusCanceled, time.Now(), "operator canceled"); err != nil {
+		t.Fatalf("UpdateRunStatus(running->canceled) error = %v", err)
 	}
 }
 

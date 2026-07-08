@@ -76,9 +76,7 @@ func (s *Service) ManualResume(ctx context.Context, parentRunID, agentMention, s
 	}
 
 	runCtx, runCancel := context.WithCancel(context.Background())
-	s.cancelMu.Lock()
-	s.cancels[run.ID] = runCancel
-	s.cancelMu.Unlock()
+	s.registerCancel(run.ID, runCancel)
 
 	spec := appruntime.RunSpec{
 		Owner:  parentRun.Owner,
@@ -92,9 +90,7 @@ func (s *Service) ManualResume(ctx context.Context, parentRunID, agentMention, s
 
 	go func() {
 		defer func() {
-			s.cancelMu.Lock()
-			delete(s.cancels, run.ID)
-			s.cancelMu.Unlock()
+			s.unregisterCancel(run.ID)
 			runCancel()
 		}()
 		if err := s.runtime.SubmitWebhookRun(runCtx, spec, func(rCtx context.Context) error {

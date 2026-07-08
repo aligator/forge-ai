@@ -24,6 +24,7 @@ type workflowRunner struct {
 	git            Git
 	runStore       runstore.RunStore
 	logger         *slog.Logger
+	service        *Service
 }
 
 type workflowState struct {
@@ -75,6 +76,10 @@ func (r *workflowRunner) prepareWorkspace(ctx context.Context, fc Forgejo, state
 	cloneURL := rewriteCloneURL(state.ticket.CloneURL, r.cfg.CloneURLBase)
 	workdir, err := r.git.Prepare(ctx, r.cfg.WorkspaceDir, cloneURL, token, state.ticket.Owner, state.ticket.Repo, state.branch, state.base, identity)
 	if err != nil {
+		if ctx.Err() != nil {
+			r.finishRun(context.Background(), state.run.ID, runstore.StatusCanceled, err)
+			return err
+		}
 		r.failWorkflow(ctx, fc, *state, err)
 		return err
 	}
@@ -91,6 +96,10 @@ func (r *workflowRunner) executeAgent(ctx context.Context, fc Forgejo, ag Agent,
 	state.result = result
 	r.logWorkspaceFiles(state.workdir, "after agent run")
 	if err != nil {
+		if ctx.Err() != nil {
+			r.finishRun(context.Background(), state.run.ID, runstore.StatusCanceled, err)
+			return err
+		}
 		err = fmt.Errorf("agent failed: %w", err)
 		r.failWorkflow(ctx, fc, *state, err)
 		return err
@@ -106,6 +115,10 @@ func (r *workflowRunner) commitAndPush(ctx context.Context, fc Forgejo, state *w
 	}
 	committed, err := r.git.CommitIfDirty(ctx, state.workdir, commitMsg)
 	if err != nil {
+		if ctx.Err() != nil {
+			r.finishRun(context.Background(), state.run.ID, runstore.StatusCanceled, err)
+			return err
+		}
 		r.failWorkflow(ctx, fc, *state, err)
 		return err
 	}
@@ -113,6 +126,10 @@ func (r *workflowRunner) commitAndPush(ctx context.Context, fc Forgejo, state *w
 	r.addRunEvent(ctx, state.run.ID, "commit_checked", fmt.Sprintf("committed=%t", committed))
 
 	if err := r.git.Push(ctx, state.workdir, state.branch); err != nil {
+		if ctx.Err() != nil {
+			r.finishRun(context.Background(), state.run.ID, runstore.StatusCanceled, err)
+			return err
+		}
 		r.failWorkflow(ctx, fc, *state, err)
 		return err
 	}

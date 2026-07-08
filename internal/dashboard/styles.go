@@ -107,6 +107,7 @@ p { margin: 4px 0 0; color: var(--muted); }
 .button:hover, .filter:hover { border-color: var(--accent); color: var(--accent); }
 .button--danger { border-color: #d8989b; color: var(--danger); }
 .button--small { min-height: 30px; padding: 4px 9px; }
+.inline-form { display: inline-flex; margin: 0; }
 .filterbar { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 .health-row {
 	display: grid;

@@ -29,6 +29,7 @@ type pageData struct {
 	Logs        []runstore.LogChunk
 	Links       []runstore.Link
 	RunLinks    []runLinkItem
+	AuditEvents []runstore.AuditEvent
 	Health      []healthItem
 	Runtime     appruntime.Snapshot
 	AgentCtx    agentContext
@@ -38,6 +39,9 @@ type pageData struct {
 	Error       string
 	Partial     bool
 	CanResume   bool
+	CanOperate  bool
+	CanCancel   bool
+	CanRetry    bool
 	GeneratedAt time.Time
 }
 
@@ -96,6 +100,7 @@ func (h *Handler) baseData(r *http.Request, title, active string) pageData {
 		Runtime:     snap,
 		Agents:      h.cfg.Agents,
 		CanResume:   h.resumer != nil,
+		CanOperate:  h.actions != nil,
 		GeneratedAt: time.Now().UTC(),
 	}
 }

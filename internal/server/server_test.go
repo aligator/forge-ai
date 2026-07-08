@@ -58,6 +58,10 @@ func (s stubDashboardStore) ListLinks(context.Context, string) ([]runstore.Link,
 	return nil, nil
 }
 
+func (s stubDashboardStore) ListAuditEvents(context.Context, runstore.ListAuditEventsOptions) ([]runstore.AuditEvent, error) {
+	return nil, nil
+}
+
 func TestNewRegistersDashboardWithoutDisturbingExistingRoutes(t *testing.T) {
 	handler := New(config.Config{
 		ForgejoURL:    "https://forgejo.example.test",

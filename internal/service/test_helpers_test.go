@@ -125,6 +125,7 @@ type recordingRunStore struct {
 	events   []runstore.EventInput
 	logs     []runstore.LogChunkInput
 	links    []runstore.LinkInput
+	audit    []runstore.AuditEventInput
 }
 
 func (s *recordingRunStore) GetRun(_ context.Context, id string) (runstore.Run, error) {
@@ -209,6 +210,13 @@ func (s *recordingRunStore) AddLink(_ context.Context, in runstore.LinkInput) er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.links = append(s.links, in)
+	return nil
+}
+
+func (s *recordingRunStore) AddAuditEvent(_ context.Context, in runstore.AuditEventInput) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.audit = append(s.audit, in)
 	return nil
 }
 
