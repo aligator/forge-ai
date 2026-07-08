@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -55,7 +56,7 @@ func (h *Handler) saveAgentSettings(w http.ResponseWriter, r *http.Request) {
 		h.renderStatus(w, r, http.StatusInternalServerError, "agents", data)
 		return
 	}
-	http.Redirect(w, r, "/dashboard/agents?saved="+mention, http.StatusSeeOther)
+	http.Redirect(w, r, "/dashboard/agents?saved="+url.QueryEscape(mention), http.StatusSeeOther)
 }
 
 func (h *Handler) resetAgentSettings(w http.ResponseWriter, r *http.Request) {
@@ -82,7 +83,7 @@ func (h *Handler) resetAgentSettings(w http.ResponseWriter, r *http.Request) {
 		h.renderStatus(w, r, http.StatusInternalServerError, "agents", data)
 		return
 	}
-	http.Redirect(w, r, "/dashboard/agents?reset="+mention, http.StatusSeeOther)
+	http.Redirect(w, r, "/dashboard/agents?reset="+url.QueryEscape(mention), http.StatusSeeOther)
 }
 
 func (h *Handler) parseAgentSettingsForm(r *http.Request, mention string) (runstore.UpsertAgentSettingsInput, error) {

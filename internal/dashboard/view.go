@@ -320,7 +320,7 @@ func agentSettingsFromRoute(route config.AgentRoute, toolHints string, allowGit 
 		Timeout:     route.Agent.Timeout,
 		ToolHints:   toolHints,
 		AllowGit:    allowGit,
-		AllowGitSet: true,
+		AllowGitSet: route.Agent.AllowGitSet,
 	}
 }
 
