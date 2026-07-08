@@ -8,6 +8,7 @@ import (
 )
 
 var ErrInvalidStatusTransition = errors.New("invalid run status transition")
+var ErrAgentSettingsNotFound = errors.New("agent settings not found")
 
 type RunKind string
 
@@ -112,6 +113,32 @@ type AuditEventInput struct {
 	TargetType string
 	TargetID   string
 	DataJSON   string
+}
+
+type AgentSettings struct {
+	Mention     string
+	Enabled     bool
+	Model       string
+	Args        []string
+	Timeout     time.Duration
+	ToolHints   string
+	AllowGit    bool
+	AllowGitSet bool
+	UpdatedAt   time.Time
+	UpdatedBy   string
+}
+
+type UpsertAgentSettingsInput struct {
+	Mention     string
+	Enabled     bool
+	Model       string
+	Args        []string
+	Timeout     time.Duration
+	ToolHints   string
+	AllowGit    bool
+	AllowGitSet bool
+	UpdatedAt   time.Time
+	UpdatedBy   string
 }
 
 type ListAuditEventsOptions struct {

@@ -209,6 +209,52 @@ tbody tr:hover { background: #fbfcfd; }
 .agent-list { display: grid; gap: 16px; }
 .agent-card__grid { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 18px; }
 .agent-card__side { display: grid; gap: 10px; align-content: start; }
+.agent-form {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 12px;
+	margin-top: 16px;
+	padding-top: 14px;
+	border-top: 1px solid var(--line);
+}
+.agent-form label {
+	display: grid;
+	gap: 5px;
+	color: var(--muted);
+	font-size: 12px;
+	font-weight: 700;
+	text-transform: uppercase;
+}
+.agent-form input:not([type="checkbox"]), .agent-form textarea {
+	width: 100%;
+	min-width: 0;
+	border: 1px solid var(--line-strong);
+	border-radius: 6px;
+	padding: 8px 9px;
+	color: var(--text);
+	background: var(--panel);
+	font: inherit;
+	font-size: 13px;
+	text-transform: none;
+}
+.agent-form textarea {
+	resize: vertical;
+	font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+.agent-form .check-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 34px;
+	text-transform: none;
+}
+.form-actions {
+	grid-column: 1 / -1;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	flex-wrap: wrap;
+}
 .secret-field {
 	display: flex;
 	align-items: center;
@@ -336,6 +382,7 @@ tbody tr:hover { background: #fbfcfd; }
 	.page-head > :last-child { margin-top: 12px; }
 	.grid.two { grid-template-columns: 1fr; }
 	.agent-card__grid { grid-template-columns: 1fr; }
+	.agent-form { grid-template-columns: 1fr; }
 	.health-row, .metric-grid { grid-template-columns: 1fr; }
 	.event-list li { grid-template-columns: 1fr; gap: 2px; }
 }

@@ -128,6 +128,58 @@ func TestSQLiteStorePersistsAuditEvents(t *testing.T) {
 	}
 }
 
+func TestSQLiteStorePersistsAgentSettings(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "runstore.sqlite")
+	store, err := OpenSQLite(ctx, path)
+	if err != nil {
+		t.Fatalf("OpenSQLite() error = %v", err)
+	}
+	saved, err := store.UpsertAgentSettings(ctx, UpsertAgentSettingsInput{
+		Mention:     "@codex",
+		Enabled:     true,
+		Model:       "gpt-test",
+		Args:        []string{"--model", "gpt-test"},
+		Timeout:     42 * time.Minute,
+		ToolHints:   "- use rtk",
+		AllowGit:    true,
+		AllowGitSet: true,
+		UpdatedBy:   "alice",
+	})
+	if err != nil {
+		t.Fatalf("UpsertAgentSettings() error = %v", err)
+	}
+	if saved.Mention != "@codex" || !saved.AllowGitSet {
+		t.Fatalf("saved settings = %+v", saved)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reopened, err := OpenSQLite(ctx, path)
+	if err != nil {
+		t.Fatalf("reopen OpenSQLite() error = %v", err)
+	}
+	defer reopened.Close()
+	got, err := reopened.GetAgentSettings(ctx, "@codex")
+	if err != nil {
+		t.Fatalf("GetAgentSettings() error = %v", err)
+	}
+	if !got.Enabled || got.Model != "gpt-test" || got.Timeout != 42*time.Minute || got.ToolHints != "- use rtk" || !got.AllowGit || !got.AllowGitSet || got.UpdatedBy != "alice" {
+		t.Fatalf("settings = %+v", got)
+	}
+	if len(got.Args) != 2 || got.Args[0] != "--model" || got.Args[1] != "gpt-test" {
+		t.Fatalf("args = %#v", got.Args)
+	}
+	all, err := reopened.ListAgentSettings(ctx)
+	if err != nil {
+		t.Fatalf("ListAgentSettings() error = %v", err)
+	}
+	if len(all) != 1 || all[0].Mention != "@codex" {
+		t.Fatalf("all settings = %+v", all)
+	}
+}
+
 func TestSQLiteStoreRejectsInvalidStatusTransition(t *testing.T) {
 	ctx := context.Background()
 	store, err := OpenSQLite(ctx, filepath.Join(t.TempDir(), "runstore.sqlite"))

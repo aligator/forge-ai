@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -17,13 +18,14 @@ import (
 )
 
 type memoryStore struct {
-	run     runstore.Run
-	runs    []runstore.Run
-	events  []runstore.Event
-	logs    []runstore.LogChunk
-	links   []runstore.Link
-	audit   []runstore.AuditEvent
-	lastOpt runstore.ListRunsOptions
+	run      runstore.Run
+	runs     []runstore.Run
+	events   []runstore.Event
+	logs     []runstore.LogChunk
+	links    []runstore.Link
+	audit    []runstore.AuditEvent
+	settings map[string]runstore.AgentSettings
+	lastOpt  runstore.ListRunsOptions
 }
 
 type failingResumer struct {
@@ -130,6 +132,48 @@ func (s *memoryStore) ListLinks(context.Context, string) ([]runstore.Link, error
 
 func (s *memoryStore) ListAuditEvents(context.Context, runstore.ListAuditEventsOptions) ([]runstore.AuditEvent, error) {
 	return s.audit, nil
+}
+
+func (s *memoryStore) AddAuditEvent(_ context.Context, in runstore.AuditEventInput) error {
+	s.audit = append(s.audit, runstore.AuditEvent{
+		Actor:      in.Actor,
+		Action:     in.Action,
+		TargetType: in.TargetType,
+		TargetID:   in.TargetID,
+		DataJSON:   in.DataJSON,
+	})
+	return nil
+}
+
+func (s *memoryStore) GetAgentSettings(_ context.Context, mention string) (runstore.AgentSettings, error) {
+	if s.settings == nil {
+		return runstore.AgentSettings{}, runstore.ErrAgentSettingsNotFound
+	}
+	settings, ok := s.settings[mention]
+	if !ok {
+		return runstore.AgentSettings{}, runstore.ErrAgentSettingsNotFound
+	}
+	return settings, nil
+}
+
+func (s *memoryStore) UpsertAgentSettings(_ context.Context, in runstore.UpsertAgentSettingsInput) (runstore.AgentSettings, error) {
+	if s.settings == nil {
+		s.settings = make(map[string]runstore.AgentSettings)
+	}
+	settings := runstore.AgentSettings{
+		Mention:     in.Mention,
+		Enabled:     in.Enabled,
+		Model:       in.Model,
+		Args:        append([]string(nil), in.Args...),
+		Timeout:     in.Timeout,
+		ToolHints:   in.ToolHints,
+		AllowGit:    in.AllowGit,
+		AllowGitSet: in.AllowGitSet,
+		UpdatedAt:   time.Now().UTC(),
+		UpdatedBy:   in.UpdatedBy,
+	}
+	s.settings[in.Mention] = settings
+	return settings, nil
 }
 
 func TestRunEventsStreamsStoredEventsAndLogs(t *testing.T) {
@@ -314,7 +358,7 @@ func TestAgentsPageRendersRoutesWithoutSecretValues(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET agents status = %d, want %d\n%s", rec.Code, http.StatusOK, body)
 	}
-	for _, want := range []string{"@codex", "codex", "AGENT_ALLOW_GIT=true", "present", "missing-agent-bin not found", "45m0s", "&lt;redacted&gt;"} {
+	for _, want := range []string{"@codex", "codex", "AGENT_ALLOW_GIT", "present", "missing-agent-bin not found", "45m0s", "&lt;redacted&gt;"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("agents body missing %q:\n%s", want, body)
 		}
@@ -326,6 +370,102 @@ func TestAgentsPageRendersRoutesWithoutSecretValues(t *testing.T) {
 	}
 	if strings.Contains(body, strings.Repeat("prompt ", 40)) {
 		t.Fatalf("agents body includes untruncated command:\n%s", body)
+	}
+}
+
+func TestSaveAgentSettingsPersistsAndAuditsSafeValues(t *testing.T) {
+	store := &memoryStore{}
+	cfg := config.Config{
+		MaxConcurrent: 1,
+		Agents: []config.AgentRoute{{
+			Mention: "@codex",
+			User:    "codex",
+			Agent: config.AgentConfig{
+				Type:    "codex",
+				Bin:     "codex",
+				Args:    []string{"--old"},
+				Timeout: 30 * time.Minute,
+			},
+		}},
+	}
+	handler := New(cfg, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	mux := http.NewServeMux()
+	handler.Register(mux)
+
+	form := url.Values{}
+	form.Set("enabled", "on")
+	form.Set("model", "gpt-test")
+	form.Set("args", "--model gpt-test --reasoning high")
+	form.Set("timeout", "45m")
+	form.Set("tool_hints", "- use rtk")
+	form.Set("allow_git_set", "on")
+	form.Set("allow_git", "on")
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/agents/%40codex/settings", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Forwarded-User", "operator")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST settings status = %d, want %d\n%s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	got := store.settings["@codex"]
+	if !got.Enabled || got.Model != "gpt-test" || got.Timeout != 45*time.Minute || got.ToolHints != "- use rtk" || !got.AllowGit || !got.AllowGitSet || got.UpdatedBy != "operator" {
+		t.Fatalf("settings = %+v", got)
+	}
+	if len(got.Args) != 4 || got.Args[0] != "--model" || got.Args[3] != "high" {
+		t.Fatalf("args = %#v", got.Args)
+	}
+	if len(store.audit) != 1 || store.audit[0].Action != "agent_settings.update" || store.audit[0].TargetID != "@codex" || store.audit[0].Actor != "operator" {
+		t.Fatalf("audit = %+v", store.audit)
+	}
+}
+
+func TestSaveAgentSettingsRejectsInvalidTimeoutAndSecrets(t *testing.T) {
+	tests := []struct {
+		name string
+		form url.Values
+	}{
+		{
+			name: "invalid timeout",
+			form: url.Values{"enabled": {"on"}, "timeout": {"0s"}},
+		},
+		{
+			name: "secret arg",
+			form: url.Values{"enabled": {"on"}, "timeout": {"30m"}, "args": {"--token abc123456789"}},
+		},
+		{
+			name: "configured secret value",
+			form: url.Values{"enabled": {"on"}, "timeout": {"30m"}, "tool_hints": {"use agent-token-secret"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &memoryStore{}
+			cfg := config.Config{
+				ForgejoToken:  "agent-token-secret",
+				MaxConcurrent: 1,
+				Agents:        []config.AgentRoute{{Mention: "@codex", User: "codex", Agent: config.AgentConfig{Timeout: 30 * time.Minute}}},
+			}
+			handler := New(cfg, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			mux := http.NewServeMux()
+			handler.Register(mux)
+
+			req := httptest.NewRequest(http.MethodPost, "/dashboard/agents/%40codex/settings", strings.NewReader(tt.form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("POST settings status = %d, want %d\n%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+			if len(store.settings) != 0 {
+				t.Fatalf("settings were saved: %+v", store.settings)
+			}
+			if strings.Contains(rec.Body.String(), "agent-token-secret") {
+				t.Fatalf("response leaked secret:\n%s", rec.Body.String())
+			}
+		})
 	}
 }
 

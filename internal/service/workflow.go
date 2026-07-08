@@ -92,7 +92,8 @@ func (r *workflowRunner) prepareWorkspace(ctx context.Context, fc Forgejo, state
 func (r *workflowRunner) executeAgent(ctx context.Context, fc Forgejo, ag Agent, state *workflowState) error {
 	r.logWorkspaceFiles(state.workdir, "before agent run")
 	sessionID := sessionIDFromInstruction(state.ticket.Instruction, r.cfg.Agents)
-	result, err := r.runAgent(ctx, ag, state.workdir, prompt(state.ticket, state.branch, state.base, r.cfg.AgentAllowGit, r.cfg.AgentToolHints), sessionID, state.run.ID)
+	allowGit, toolHints := r.agentPromptDefaults(state.run.AgentMention)
+	result, err := r.runAgent(ctx, ag, state.workdir, prompt(state.ticket, state.branch, state.base, allowGit, toolHints), sessionID, state.run.ID)
 	state.result = result
 	r.logWorkspaceFiles(state.workdir, "after agent run")
 	if err != nil {
@@ -106,6 +107,24 @@ func (r *workflowRunner) executeAgent(ctx context.Context, fc Forgejo, ag Agent,
 	}
 	r.addRunEvent(ctx, state.run.ID, "agent_finished", "agent completed")
 	return nil
+}
+
+func (r *workflowRunner) agentPromptDefaults(mention string) (bool, string) {
+	allowGit := r.cfg.AgentAllowGit
+	toolHints := r.cfg.AgentToolHints
+	for _, route := range r.cfg.Agents {
+		if !strings.EqualFold(route.Mention, mention) {
+			continue
+		}
+		if route.Agent.AllowGitSet {
+			allowGit = route.Agent.AllowGit
+		}
+		if route.Agent.ToolHints != "" {
+			toolHints = route.Agent.ToolHints
+		}
+		break
+	}
+	return allowGit, toolHints
 }
 
 func (r *workflowRunner) commitAndPush(ctx context.Context, fc Forgejo, state *workflowState) error {

@@ -182,6 +182,9 @@ func (r *workflowRunner) createResumeRun(ctx context.Context, parentRun runstore
 	}
 	agentType := ""
 	for _, route := range r.cfg.Agents {
+		if route.Disabled {
+			continue
+		}
 		if strings.EqualFold(route.Mention, in.AgentMention) {
 			agentType = route.Agent.Type
 			break

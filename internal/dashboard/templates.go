@@ -415,30 +415,31 @@ const templates = `
 <section class="page-head">
 	<div>
 		<h1>Agents</h1>
-		<p>Read-only route configuration and startup checks.</p>
+		<p>Safe defaults only. Secrets stay in environment or secret storage. Saved changes apply after restart.</p>
 	</div>
 </section>
+{{template "error" .}}
 {{template "agent_list" .}}
 {{end}}
 
 {{define "agent_list"}}
 {{if .AgentList}}
 <section class="agent-list">
-	{{range .AgentList}}{{template "agent_config_read_only_card" .}}{{end}}
+	{{range .AgentList}}{{template "agent_config_form" .}}{{end}}
 </section>
 {{else}}
 <div class="empty-state"><h2>No agents configured</h2><p>Set AGENT_0_USER and agent command settings before accepting webhook work.</p></div>
 {{end}}
 {{end}}
 
-{{define "agent_config_read_only_card"}}
+{{define "agent_config_form"}}
 <article class="panel agent-card">
 	<div class="panel-head">
 		<div>
 			<h2>{{.Mention}}</h2>
 			<p>{{.User}} <span class="muted">{{.Type}}</span></p>
 		</div>
-		<span class="status">AGENT_ALLOW_GIT={{.AllowGit}}</span>
+		<span class="{{if .Enabled}}status status--success{{else}}status status--danger{{end}}">{{if .Enabled}}enabled{{else}}disabled{{end}}</span>
 	</div>
 	<div class="agent-card__grid">
 		<dl class="facts">
@@ -447,8 +448,10 @@ const templates = `
 			<dt>Agent type</dt><dd>{{.Type}}</dd>
 			<dt>Binary</dt><dd class="mono">{{if .Bin}}{{.Bin}}{{else}}-{{end}}</dd>
 			<dt>Args</dt><dd>{{template "command_preview" .ArgsPreview}}</dd>
-			<dt>Command</dt><dd>{{template "command_preview" .CommandPreview}}</dd>
+			<dt>Preview</dt><dd>{{template "command_preview" .CommandPreview}}</dd>
 			<dt>Timeout</dt><dd>{{.Timeout}}</dd>
+			<dt>Effect</dt><dd>Restart required</dd>
+			{{if .Persisted}}<dt>Saved</dt><dd>{{formatTime .UpdatedAt}} by {{.UpdatedBy}}</dd>{{end}}
 		</dl>
 		<div class="agent-card__side">
 			{{template "secret_presence_field" dict "Label" "Token" "Present" .TokenPresent}}
@@ -456,6 +459,31 @@ const templates = `
 			{{template "validation_result_list" .Validation}}
 		</div>
 	</div>
+	<form class="agent-form" method="post" action="{{.SettingsAction}}">
+		<label class="check-row"><input type="checkbox" name="enabled" {{if .Enabled}}checked{{end}}> Enabled</label>
+		<label>
+			Model
+			<input name="model" value="{{.Model}}" placeholder="default model">
+		</label>
+		<label>
+			Args
+			<textarea name="args" rows="3" placeholder="--flag value">{{.ArgsInput}}</textarea>
+		</label>
+		<label>
+			Timeout
+			<input name="timeout" value="{{.TimeoutInput}}" placeholder="30m">
+		</label>
+		<label>
+			Tool-Hints
+			<textarea name="tool_hints" rows="4">{{.ToolHints}}</textarea>
+		</label>
+		<label class="check-row"><input type="checkbox" name="allow_git_set" {{if .AllowGitSet}}checked{{end}}> Override AGENT_ALLOW_GIT</label>
+		<label class="check-row"><input type="checkbox" name="allow_git" {{if .AllowGit}}checked{{end}}> AGENT_ALLOW_GIT</label>
+		<div class="form-actions">
+			<button class="button" type="submit">Save defaults</button>
+			<span class="muted">Token, password, API key, and secret values are rejected before saving.</span>
+		</div>
+	</form>
 </article>
 {{end}}
 

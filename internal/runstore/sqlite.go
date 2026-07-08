@@ -3,6 +3,7 @@ package runstore
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -96,6 +97,17 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			target_type TEXT NOT NULL,
 			target_id TEXT NOT NULL,
 			data_json TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE TABLE IF NOT EXISTS agent_settings (
+			agent_mention TEXT PRIMARY KEY,
+			enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+			model TEXT NOT NULL DEFAULT '',
+			args_json TEXT NOT NULL DEFAULT '[]',
+			timeout_seconds INTEGER NOT NULL,
+			tool_hints TEXT NOT NULL DEFAULT '',
+			allow_git INTEGER CHECK (allow_git IN (0, 1)),
+			updated_at TEXT NOT NULL,
+			updated_by TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_runs_ticket ON runs(owner, repo, ticket_kind, ticket_number)`,
 		`CREATE INDEX IF NOT EXISTS idx_run_events_run_id ON run_events(run_id, id)`,
@@ -235,6 +247,70 @@ func (s *SQLiteStore) AddAuditEvent(ctx context.Context, in AuditEventInput) err
 		return fmt.Errorf("add audit event: %w", err)
 	}
 	return nil
+}
+
+func (s *SQLiteStore) UpsertAgentSettings(ctx context.Context, in UpsertAgentSettingsInput) (AgentSettings, error) {
+	if in.UpdatedAt.IsZero() {
+		in.UpdatedAt = time.Now().UTC()
+	}
+	argsJSON, err := json.Marshal(in.Args)
+	if err != nil {
+		return AgentSettings{}, fmt.Errorf("encode agent settings args: %w", err)
+	}
+	var allowGit any
+	if in.AllowGitSet {
+		if in.AllowGit {
+			allowGit = 1
+		} else {
+			allowGit = 0
+		}
+	}
+	timeoutSeconds := int64(in.Timeout.Round(time.Second) / time.Second)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO agent_settings (
+		agent_mention, enabled, model, args_json, timeout_seconds, tool_hints, allow_git, updated_at, updated_by
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(agent_mention) DO UPDATE SET
+		enabled = excluded.enabled,
+		model = excluded.model,
+		args_json = excluded.args_json,
+		timeout_seconds = excluded.timeout_seconds,
+		tool_hints = excluded.tool_hints,
+		allow_git = excluded.allow_git,
+		updated_at = excluded.updated_at,
+		updated_by = excluded.updated_by`,
+		in.Mention, boolInt(in.Enabled), in.Model, string(argsJSON), timeoutSeconds, in.ToolHints, allowGit, formatTime(in.UpdatedAt), in.UpdatedBy)
+	if err != nil {
+		return AgentSettings{}, fmt.Errorf("upsert agent settings: %w", err)
+	}
+	return s.GetAgentSettings(ctx, in.Mention)
+}
+
+func (s *SQLiteStore) GetAgentSettings(ctx context.Context, mention string) (AgentSettings, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT agent_mention, enabled, model, args_json, timeout_seconds, tool_hints, allow_git, updated_at, updated_by
+		FROM agent_settings WHERE agent_mention = ?`, mention)
+	settings, err := scanAgentSettings(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AgentSettings{}, ErrAgentSettingsNotFound
+	}
+	return settings, err
+}
+
+func (s *SQLiteStore) ListAgentSettings(ctx context.Context) ([]AgentSettings, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT agent_mention, enabled, model, args_json, timeout_seconds, tool_hints, allow_git, updated_at, updated_by
+		FROM agent_settings ORDER BY agent_mention`)
+	if err != nil {
+		return nil, fmt.Errorf("list agent settings: %w", err)
+	}
+	defer rows.Close()
+	var settings []AgentSettings
+	for rows.Next() {
+		item, err := scanAgentSettings(rows)
+		if err != nil {
+			return nil, err
+		}
+		settings = append(settings, item)
+	}
+	return settings, rows.Err()
 }
 
 func (s *SQLiteStore) GetRun(ctx context.Context, id string) (Run, error) {
@@ -398,6 +474,36 @@ func scanRun(row runScanner) (Run, error) {
 		run.FinishedAt = parseTime(finishedAt.String)
 	}
 	return run, nil
+}
+
+func scanAgentSettings(row runScanner) (AgentSettings, error) {
+	var settings AgentSettings
+	var enabled int
+	var argsJSON string
+	var timeoutSeconds int64
+	var allowGit sql.NullInt64
+	var updatedAt string
+	if err := row.Scan(&settings.Mention, &enabled, &settings.Model, &argsJSON, &timeoutSeconds, &settings.ToolHints, &allowGit, &updatedAt, &settings.UpdatedBy); err != nil {
+		return AgentSettings{}, err
+	}
+	settings.Enabled = enabled == 1
+	if err := json.Unmarshal([]byte(argsJSON), &settings.Args); err != nil {
+		return AgentSettings{}, fmt.Errorf("decode agent settings args: %w", err)
+	}
+	settings.Timeout = time.Duration(timeoutSeconds) * time.Second
+	if allowGit.Valid {
+		settings.AllowGitSet = true
+		settings.AllowGit = allowGit.Int64 == 1
+	}
+	settings.UpdatedAt = parseTime(updatedAt)
+	return settings, nil
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func formatTime(t time.Time) string {
