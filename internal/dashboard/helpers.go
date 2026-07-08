@@ -68,3 +68,15 @@ func forgejoTicketURL(base string, run runstore.Run) string {
 	}
 	return strings.TrimRight(base, "/") + "/" + run.Owner + "/" + run.Repo + "/" + run.TicketKind + "s/" + fmt.Sprint(run.TicketNumber)
 }
+
+func dict(values ...any) map[string]any {
+	out := make(map[string]any, len(values)/2)
+	for i := 0; i+1 < len(values); i += 2 {
+		key, ok := values[i].(string)
+		if !ok {
+			continue
+		}
+		out[key] = values[i+1]
+	}
+	return out
+}

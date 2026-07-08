@@ -257,7 +257,7 @@ func (r *workflowRunner) finishRun(ctx context.Context, runID string, status run
 	r.addRunEvent(ctx, runID, string(status), message)
 }
 
-// recordAgentResult is used by the legacy (non-streaming) agent path. It writes
+// recordAgentResult is used by the non-streaming agent path. It writes
 // the full tail output as a single "combined" log chunk. The streaming path uses
 // recordAgentSession only — per-chunk stdout/stderr are written by runLogWriter
 // during execution, so no combined chunk is produced for streaming agents.

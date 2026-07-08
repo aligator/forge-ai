@@ -85,7 +85,7 @@ func main() {
 		}
 		agents[key] = agent.NewRunner(route.Agent, logger)
 		forgejoClients[key] = forgejo.NewClient(cfg.ForgejoURL, token)
-		logger.Info("registered agent", "mention", route.Mention, "user", route.User, "bin", route.Agent.Bin, "command", route.Agent.CommandTemplate)
+		logger.Info("registered agent", "mention", route.Mention, "user", route.User, "bin", route.Agent.Bin, "command_configured", route.Agent.CommandTemplate != "")
 	}
 
 	forgejoClient := forgejo.NewClient(cfg.ForgejoURL, cfg.ForgejoToken)
