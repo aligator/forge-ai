@@ -32,6 +32,15 @@ type failingResumer struct {
 
 type noopActions struct{}
 
+type recordingActions struct {
+	cancelRunID string
+	retryRunID  string
+	retryNewID  string
+	paused      bool
+	resumed     bool
+	actor       string
+}
+
 func (r failingResumer) ManualResume(context.Context, string, string, string, string, string, string) (string, error) {
 	return "", errors.New("resume failed")
 }
@@ -51,6 +60,31 @@ func (noopActions) RetryRun(context.Context, string, string) (string, error) {
 func (noopActions) PauseQueue(context.Context, string) {}
 
 func (noopActions) ResumeQueue(context.Context, string) {}
+
+func (a *recordingActions) CancelRunAs(_ context.Context, id, actor string) bool {
+	a.cancelRunID = id
+	a.actor = actor
+	return true
+}
+
+func (a *recordingActions) RetryRun(_ context.Context, parentRunID, actor string) (string, error) {
+	a.retryRunID = parentRunID
+	a.actor = actor
+	if a.retryNewID != "" {
+		return a.retryNewID, nil
+	}
+	return "retry-run", nil
+}
+
+func (a *recordingActions) PauseQueue(_ context.Context, actor string) {
+	a.paused = true
+	a.actor = actor
+}
+
+func (a *recordingActions) ResumeQueue(_ context.Context, actor string) {
+	a.resumed = true
+	a.actor = actor
+}
 
 func (s *memoryStore) ListRuns(_ context.Context, opts runstore.ListRunsOptions) ([]runstore.Run, error) {
 	s.lastOpt = opts
@@ -298,6 +332,88 @@ func TestRunDetailShowsOnlyValidOperatorActions(t *testing.T) {
 			if tt.unwantRetry && hasRetry {
 				t.Fatalf("retry action unexpectedly visible:\n%s", body)
 			}
+		})
+	}
+}
+
+func TestOperatorActionPostsRedirect(t *testing.T) {
+	tests := []struct {
+		name         string
+		path         string
+		run          runstore.Run
+		wantLocation string
+		assert       func(*testing.T, *recordingActions)
+	}{
+		{
+			name:         "cancel run",
+			path:         "/dashboard/runs/run-cancel/cancel",
+			run:          runstore.Run{ID: "run-cancel", Status: runstore.StatusRunning},
+			wantLocation: "/dashboard/runs/run-cancel",
+			assert: func(t *testing.T, actions *recordingActions) {
+				t.Helper()
+				if actions.cancelRunID != "run-cancel" {
+					t.Fatalf("cancel run ID = %q, want run-cancel", actions.cancelRunID)
+				}
+			},
+		},
+		{
+			name:         "retry run",
+			path:         "/dashboard/runs/run-retry/retry",
+			run:          runstore.Run{ID: "run-retry", Status: runstore.StatusFailed},
+			wantLocation: "/dashboard/runs/retry-new",
+			assert: func(t *testing.T, actions *recordingActions) {
+				t.Helper()
+				if actions.retryRunID != "run-retry" {
+					t.Fatalf("retry run ID = %q, want run-retry", actions.retryRunID)
+				}
+			},
+		},
+		{
+			name:         "pause queue",
+			path:         "/dashboard/queue/pause",
+			wantLocation: "/dashboard",
+			assert: func(t *testing.T, actions *recordingActions) {
+				t.Helper()
+				if !actions.paused {
+					t.Fatal("PauseQueue was not called")
+				}
+			},
+		},
+		{
+			name:         "resume queue",
+			path:         "/dashboard/queue/resume",
+			wantLocation: "/dashboard",
+			assert: func(t *testing.T, actions *recordingActions) {
+				t.Helper()
+				if !actions.resumed {
+					t.Fatal("ResumeQueue was not called")
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &memoryStore{run: tt.run}
+			actions := &recordingActions{retryNewID: "retry-new"}
+			handler := New(config.Config{MaxConcurrent: 1}, store, slog.New(slog.NewTextHandler(io.Discard, nil))).WithOperatorActions(actions)
+			mux := http.NewServeMux()
+			handler.Register(mux)
+
+			req := httptest.NewRequest(http.MethodPost, tt.path, nil)
+			req.Header.Set("X-Forwarded-User", "operator")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusSeeOther {
+				t.Fatalf("POST %s status = %d, want %d\n%s", tt.path, rec.Code, http.StatusSeeOther, rec.Body.String())
+			}
+			if got := rec.Header().Get("Location"); got != tt.wantLocation {
+				t.Fatalf("Location = %q, want %q", got, tt.wantLocation)
+			}
+			if actions.actor != "operator" {
+				t.Fatalf("actor = %q, want operator", actions.actor)
+			}
+			tt.assert(t, actions)
 		})
 	}
 }

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -30,7 +31,15 @@ func (s *Service) RetryRun(ctx context.Context, parentRunID, actor string) (stri
 	if err != nil {
 		return "", fmt.Errorf("create retry run: %w", err)
 	}
-	s.audit(ctx, actor, "run.retry", "run", parentRunID, `{"new_run_id":"`+run.ID+`"}`)
+	auditData, err := json.Marshal(struct {
+		NewRunID string `json:"new_run_id"`
+	}{
+		NewRunID: run.ID,
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode retry audit data: %w", err)
+	}
+	s.audit(ctx, actor, "run.retry", "run", parentRunID, string(auditData))
 
 	ticket := s.handler.runner.ticketForRun(parentRun)
 	fc := s.handler.forgejoFor(parentRun.AgentMention)

@@ -117,6 +117,33 @@ func TestRetryRunRejectsNonFailedOrCanceledRun(t *testing.T) {
 	}
 }
 
+func TestCancelRunAsWritesAuditEventOnSuccess(t *testing.T) {
+	store := &recordingRunStore{}
+	svc := New(Options{
+		Config:   config.Config{MaxConcurrent: 1},
+		RunStore: store,
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	runID := "run-cancel"
+	canceled := false
+	svc.registerCancel(runID, func() {
+		canceled = true
+	})
+
+	if !svc.CancelRunAs(context.Background(), runID, "alice") {
+		t.Fatal("CancelRunAs() = false, want true")
+	}
+	if !canceled {
+		t.Fatal("registered cancel func was not called")
+	}
+	if len(store.audit) != 1 {
+		t.Fatalf("audit events = %+v, want 1", store.audit)
+	}
+	if store.audit[0].Actor != "alice" || store.audit[0].Action != "run.cancel" || store.audit[0].TargetType != "run" || store.audit[0].TargetID != runID {
+		t.Fatalf("audit event = %+v", store.audit[0])
+	}
+}
+
 func TestQueuePauseResumeWritesAuditEvents(t *testing.T) {
 	store := &recordingRunStore{}
 	svc := New(Options{
