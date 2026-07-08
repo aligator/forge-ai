@@ -64,7 +64,6 @@ func (h *Handler) runDetail(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) agents(w http.ResponseWriter, r *http.Request) {
 	data := h.baseData(r, "Agents", "agents")
-	data.Agents = h.cfg.Agents
 	h.render(w, r, "agents", data)
 }
 
