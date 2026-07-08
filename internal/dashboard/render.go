@@ -20,6 +20,7 @@ type pageData struct {
 	QueueLabel  string
 	ModeLabel   string
 	Agents      []config.AgentRoute
+	AgentList   []agentListItem
 	Runs        []runstore.Run
 	ActiveRuns  []runstore.Run
 	RecentRuns  []runstore.Run
@@ -99,6 +100,7 @@ func (h *Handler) baseData(r *http.Request, title, active string) pageData {
 		Health:      h.health(r.Context()),
 		Runtime:     snap,
 		Agents:      h.cfg.Agents,
+		AgentList:   h.agentList(),
 		CanResume:   h.resumer != nil,
 		CanOperate:  h.actions != nil,
 		GeneratedAt: time.Now().UTC(),

@@ -281,6 +281,54 @@ func TestRunDetailRendersContextLinksAndRedactedLogs(t *testing.T) {
 	}
 }
 
+func TestAgentsPageRendersRoutesWithoutSecretValues(t *testing.T) {
+	secretToken := "agent-token-secret"
+	secretPassword := "agent-password-secret"
+	longCommand := "missing-agent-bin --password=" + secretPassword + " " + strings.Repeat("prompt ", 80)
+	cfg := config.Config{
+		ForgejoURL:    "https://forgejo.example.test",
+		ForgejoToken:  "global-token-secret",
+		MaxConcurrent: 1,
+		AgentAllowGit: true,
+		Agents: []config.AgentRoute{{
+			Mention:  "@codex",
+			User:     "codex",
+			Token:    secretToken,
+			Password: secretPassword,
+			Agent: config.AgentConfig{
+				Type:            "codex",
+				Bin:             "missing-agent-bin",
+				Args:            []string{"--token", secretToken},
+				CommandTemplate: longCommand,
+				Timeout:         45 * time.Minute,
+			},
+		}},
+	}
+	handler := New(cfg, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	mux := http.NewServeMux()
+	handler.Register(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dashboard/agents", nil))
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET agents status = %d, want %d\n%s", rec.Code, http.StatusOK, body)
+	}
+	for _, want := range []string{"@codex", "codex", "AGENT_ALLOW_GIT=true", "present", "missing-agent-bin not found", "45m0s", "&lt;redacted&gt;"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("agents body missing %q:\n%s", want, body)
+		}
+	}
+	for _, unwanted := range []string{secretToken, secretPassword, "global-token-secret"} {
+		if strings.Contains(body, unwanted) {
+			t.Fatalf("agents body leaked secret %q:\n%s", unwanted, body)
+		}
+	}
+	if strings.Contains(body, strings.Repeat("prompt ", 40)) {
+		t.Fatalf("agents body includes untruncated command:\n%s", body)
+	}
+}
+
 func TestRunDetailShowsOnlyValidOperatorActions(t *testing.T) {
 	tests := []struct {
 		name         string

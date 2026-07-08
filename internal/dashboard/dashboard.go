@@ -84,6 +84,7 @@ func New(cfg config.Config, store Store, logger *slog.Logger, runtime ...Runtime
 		"ticketURL":      forgejoTicketURL,
 		"shortID":        shortID,
 		"redactLog":      h.redactor.Redact,
+		"dict":           dict,
 	}).Parse(templates))
 	return h
 }

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +37,26 @@ type agentContext struct {
 	CommandPreview string
 	Timeout        time.Duration
 	AllowGit       bool
+}
+
+type agentListItem struct {
+	Mention         string
+	User            string
+	Type            string
+	Bin             string
+	ArgsPreview     string
+	CommandPreview  string
+	Timeout         time.Duration
+	AllowGit        bool
+	TokenPresent    bool
+	PasswordPresent bool
+	Validation      []validationResult
+}
+
+type validationResult struct {
+	Label   string
+	OK      bool
+	Message string
 }
 
 type runLinkItem struct {
@@ -209,12 +230,129 @@ func (h *Handler) agentContext(run runstore.Run) agentContext {
 	return ctx
 }
 
+func (h *Handler) agentList() []agentListItem {
+	items := make([]agentListItem, 0, len(h.cfg.Agents))
+	for i, route := range h.cfg.Agents {
+		items = append(items, h.agentListItem(i, route))
+	}
+	return items
+}
+
+func (h *Handler) agentListItem(index int, route config.AgentRoute) agentListItem {
+	item := agentListItem{
+		Mention:         route.Mention,
+		User:            route.User,
+		Type:            firstNonEmpty(route.Agent.Type, agentBinName(route.Agent)),
+		Bin:             route.Agent.Bin,
+		ArgsPreview:     h.safePreview(strings.Join(route.Agent.Args, " ")),
+		CommandPreview:  h.safePreview(commandPreview(route.Agent)),
+		Timeout:         route.Agent.Timeout,
+		AllowGit:        h.cfg.AgentAllowGit,
+		TokenPresent:    route.Token != "" || h.cfg.ForgejoToken != "",
+		PasswordPresent: route.Password != "",
+	}
+	item.Validation = h.agentValidation(index, route)
+	return item
+}
+
+func (h *Handler) agentValidation(index int, route config.AgentRoute) []validationResult {
+	var results []validationResult
+	results = append(results,
+		validationResult{
+			Label:   "Mention",
+			OK:      strings.TrimSpace(route.Mention) != "",
+			Message: validationMessage(strings.TrimSpace(route.Mention) != "", route.Mention, "missing AGENT_"+strconv.Itoa(index)+"_USER"),
+		},
+		validationResult{
+			Label:   "Forgejo user",
+			OK:      strings.TrimSpace(route.User) != "",
+			Message: validationMessage(strings.TrimSpace(route.User) != "", route.User, "missing"),
+		},
+		validationResult{
+			Label:   "Command",
+			OK:      strings.TrimSpace(route.Agent.Bin) != "" || strings.TrimSpace(route.Agent.CommandTemplate) != "",
+			Message: validationMessage(strings.TrimSpace(route.Agent.Bin) != "" || strings.TrimSpace(route.Agent.CommandTemplate) != "", "configured", "missing binary or command"),
+		},
+		validationResult{
+			Label:   "Timeout",
+			OK:      route.Agent.Timeout > 0,
+			Message: validationMessage(route.Agent.Timeout > 0, route.Agent.Timeout.String(), "must be positive"),
+		},
+		h.agentBinaryValidation(route),
+	)
+	return results
+}
+
+func (h *Handler) agentBinaryValidation(route config.AgentRoute) validationResult {
+	bin := route.Agent.Bin
+	if bin == "" && route.Agent.CommandTemplate != "" {
+		fields := strings.Fields(route.Agent.CommandTemplate)
+		if len(fields) > 0 {
+			bin = fields[0]
+		}
+	}
+	if strings.TrimSpace(bin) == "" {
+		return validationResult{Label: "Binary", OK: false, Message: "missing"}
+	}
+	if _, err := exec.LookPath(bin); err != nil {
+		return validationResult{Label: "Binary", OK: false, Message: bin + " not found"}
+	}
+	return validationResult{Label: "Binary", OK: true, Message: bin + " found"}
+}
+
 func commandPreview(agent config.AgentConfig) string {
 	if agent.CommandTemplate != "" {
 		return agent.CommandTemplate
 	}
 	parts := append([]string{agent.Bin}, agent.Args...)
 	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+func agentBinName(agent config.AgentConfig) string {
+	bin := strings.TrimSpace(agent.Bin)
+	if bin == "" && agent.CommandTemplate != "" {
+		fields := strings.Fields(agent.CommandTemplate)
+		if len(fields) > 0 {
+			bin = fields[0]
+		}
+	}
+	if bin == "" {
+		return ""
+	}
+	return filepath.Base(bin)
+}
+
+func (h *Handler) safePreview(value string) string {
+	value = h.redactor.Redact(strings.TrimSpace(value))
+	if value == "" {
+		return ""
+	}
+	return truncatePreview(value, 180)
+}
+
+func truncatePreview(value string, limit int) string {
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return strings.TrimSpace(safeHead(value, limit)) + "..."
+}
+
+func safeHead(value string, byteLimit int) string {
+	if byteLimit <= 0 || len(value) <= byteLimit {
+		return value
+	}
+	offset := byteLimit
+	for offset > 0 && value[offset]&0xC0 == 0x80 {
+		offset--
+	}
+	return value[:offset]
+}
+
+func validationMessage(ok bool, good, bad string) string {
+	if ok {
+		return good
+	}
+	return bad
 }
 
 func runLinks(base string, run runstore.Run, stored []runstore.Link) []runLinkItem {

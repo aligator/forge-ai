@@ -415,29 +415,71 @@ const templates = `
 <section class="page-head">
 	<div>
 		<h1>Agents</h1>
-		<p>Configured mentions and execution backends.</p>
+		<p>Read-only route configuration and startup checks.</p>
 	</div>
 </section>
-{{if .Agents}}
-<div class="table-wrap">
-	<table>
-		<thead><tr><th>Mention</th><th>User</th><th>Type</th><th>Command</th><th>Timeout</th></tr></thead>
-		<tbody>
-			{{range .Agents}}
-			<tr>
-				<td class="mono">{{.Mention}}</td>
-				<td>{{.User}}</td>
-				<td>{{.Agent.Type}}</td>
-				<td class="mono">{{if .Agent.CommandTemplate}}{{.Agent.CommandTemplate}}{{else}}{{.Agent.Bin}} {{range .Agent.Args}}{{.}} {{end}}{{end}}</td>
-				<td>{{.Agent.Timeout}}</td>
-			</tr>
-			{{end}}
-		</tbody>
-	</table>
-</div>
+{{template "agent_list" .}}
+{{end}}
+
+{{define "agent_list"}}
+{{if .AgentList}}
+<section class="agent-list">
+	{{range .AgentList}}{{template "agent_config_read_only_card" .}}{{end}}
+</section>
 {{else}}
 <div class="empty-state"><h2>No agents configured</h2><p>Set AGENT_0_USER and agent command settings before accepting webhook work.</p></div>
 {{end}}
+{{end}}
+
+{{define "agent_config_read_only_card"}}
+<article class="panel agent-card">
+	<div class="panel-head">
+		<div>
+			<h2>{{.Mention}}</h2>
+			<p>{{.User}} <span class="muted">{{.Type}}</span></p>
+		</div>
+		<span class="status">AGENT_ALLOW_GIT={{.AllowGit}}</span>
+	</div>
+	<div class="agent-card__grid">
+		<dl class="facts">
+			<dt>Mention</dt><dd class="mono">{{.Mention}}</dd>
+			<dt>Forgejo user</dt><dd>{{.User}}</dd>
+			<dt>Agent type</dt><dd>{{.Type}}</dd>
+			<dt>Binary</dt><dd class="mono">{{if .Bin}}{{.Bin}}{{else}}-{{end}}</dd>
+			<dt>Args</dt><dd>{{template "command_preview" .ArgsPreview}}</dd>
+			<dt>Command</dt><dd>{{template "command_preview" .CommandPreview}}</dd>
+			<dt>Timeout</dt><dd>{{.Timeout}}</dd>
+		</dl>
+		<div class="agent-card__side">
+			{{template "secret_presence_field" dict "Label" "Token" "Present" .TokenPresent}}
+			{{template "secret_presence_field" dict "Label" "Password" "Present" .PasswordPresent}}
+			{{template "validation_result_list" .Validation}}
+		</div>
+	</div>
+</article>
+{{end}}
+
+{{define "secret_presence_field"}}
+<div class="secret-field">
+	<span>{{.Label}}</span>
+	<strong class="{{if .Present}}status status--success{{else}}status status--danger{{end}}">{{if .Present}}present{{else}}missing{{end}}</strong>
+</div>
+{{end}}
+
+{{define "command_preview"}}
+{{if .}}<code class="command-preview">{{.}}</code>{{else}}<span class="muted">-</span>{{end}}
+{{end}}
+
+{{define "validation_result_list"}}
+<ul class="validation-list">
+	{{range .}}
+	<li>
+		<span class="{{if .OK}}status status--success{{else}}status status--danger{{end}}">{{if .OK}}ok{{else}}error{{end}}</span>
+		<strong>{{.Label}}</strong>
+		<em>{{.Message}}</em>
+	</li>
+	{{end}}
+</ul>
 {{end}}
 
 {{define "audit"}}
