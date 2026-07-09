@@ -49,6 +49,7 @@ Implementation rules:
 - Bugfixes must fix the root cause when possible; do not patch only symptoms.
 - If an attempt failed, clean up abandoned code before moving on.
 - Structure code cleanly from the start with sensible architecture, not everything in one file.
+- Your training data has a knowledge cutoff. Always look up the latest stable versions of tools, libraries, and APIs before using them — never assume your known version is current.
 
 Blocked? Post a Forgejo comment explaining the blocker. Otherwise implement directly — do not ask for confirmation on steps the task already specifies.
 
