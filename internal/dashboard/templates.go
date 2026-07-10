@@ -161,7 +161,6 @@ const templates = `
 		<h1>Operations</h1>
 		<p>Current run activity and service status.</p>
 	</div>
-	<a class="button" href="/dashboard/runs" hx-get="/dashboard/runs" hx-target="#main-panel" hx-push-url="true">View runs</a>
 </section>
 {{template "error" .}}
 {{template "health_row" .}}
@@ -433,14 +432,18 @@ const templates = `
 {{end}}
 
 {{define "agent_config_form"}}
-<article class="panel agent-card">
-	<div class="panel-head">
-		<div>
-			<h2>{{.Mention}}</h2>
-			<p>{{.User}} <span class="muted">{{.Type}}</span></p>
+<details class="panel agent-card agent-drawer">
+	<summary class="panel-head agent-drawer__summary">
+		<div class="agent-drawer__title">
+			<span class="agent-drawer__chevron" aria-hidden="true">▸</span>
+			<div>
+				<h2>{{.Mention}}</h2>
+				<p>{{.User}} <span class="muted">{{.Type}}</span></p>
+			</div>
 		</div>
 		<span class="{{if .Enabled}}status status--success{{else}}status status--danger{{end}}">{{if .Enabled}}enabled{{else}}disabled{{end}}</span>
-	</div>
+	</summary>
+	<div class="agent-drawer__body">
 	<div class="agent-card__grid">
 		<dl class="facts">
 			<dt>Mention</dt><dd class="mono">{{.Mention}}</dd>
@@ -491,7 +494,8 @@ const templates = `
 		<span class="muted">Removes the dashboard override for this agent.</span>
 	</form>
 	{{end}}
-</article>
+	</div>
+</details>
 {{end}}
 
 {{define "secret_presence_field"}}

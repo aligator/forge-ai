@@ -207,6 +207,37 @@ tbody tr:hover { background: #fbfcfd; }
 .facts dt { color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; }
 .facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .agent-list { display: grid; gap: 16px; }
+.agent-drawer { padding: 0; overflow: hidden; }
+.agent-drawer__summary {
+	margin-bottom: 0;
+	padding: 16px 18px;
+	cursor: pointer;
+	list-style: none;
+	user-select: none;
+	transition: background 0.12s ease;
+}
+.agent-drawer__summary::-webkit-details-marker { display: none; }
+.agent-drawer__summary:hover { background: var(--accent-weak); }
+.agent-drawer__summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.agent-drawer__title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.agent-drawer__title h2 { line-height: 1.2; }
+.agent-drawer__chevron {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
+	flex: none;
+	border-radius: 6px;
+	background: var(--accent-weak);
+	color: var(--accent);
+	font-size: 12px;
+	transition: transform 0.18s ease;
+}
+.agent-drawer[open] > .agent-drawer__summary .agent-drawer__chevron { transform: rotate(90deg); }
+.agent-drawer[open] > .agent-drawer__summary { border-bottom: 1px solid var(--line); background: var(--bg); }
+.agent-drawer[open] > .agent-drawer__summary:hover { background: var(--accent-weak); }
+.agent-drawer__body { padding: 18px; }
 .agent-card__grid { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 18px; }
 .agent-card__side { display: grid; gap: 10px; align-content: start; }
 .agent-reset-form { gap: 10px; align-items: center; margin-top: 12px; }
