@@ -93,6 +93,10 @@ USER root
 WORKDIR /var/lib/forge-ai
 EXPOSE 8080
 
+# Marker for the forge-ai agent container; project dev shells route caches out
+# of the workspace when set (see flake.nix).
+ENV FORGE_AI_CONTAINER=1
+
 ENV AGENT_TOOL_HINTS="- rtk is installed at /usr/local/bin/rtk. Prefix shell commands with rtk.\n- Nix is installed (single-user). Use it to install any CLI tools you need without root: nix-env -iA nixpkgs.ripgrep (prebuilt binaries, fast). Run . ~/.nix-profile/etc/profile.d/nix.sh first if nix commands are not found.\n- Caveman skill/plugin support is installed with native agent paths: Claude plugin, Codex skill, and opencode skill. Use caveman style by default: terse, no filler, preserve exact code/commands/errors. Switch levels with /caveman lite|full|ultra when supported. Do not enable caveman-shrink MCP unless explicitly requested.\n- Playwright MCP is available for browser automation and web scraping (headless Chromium).\n- Forgejo MCP is available (MCP server name: forgejo). Use it to read issue comments, list PRs, fetch file contents, search code, and more. The credentials and server URL are pre-configured via environment variables."
 
 ENTRYPOINT ["docker-entrypoint.sh"]
