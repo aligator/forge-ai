@@ -1,5 +1,11 @@
 package agent
 
+import (
+	"context"
+
+	"codeberg.org/forge-ai/internal/config"
+)
+
 type openCodeAdapter struct{}
 
 func (openCodeAdapter) Invocation(baseArgs []string, prompt, sessionID string) Invocation {
@@ -14,4 +20,8 @@ func (openCodeAdapter) Invocation(baseArgs []string, prompt, sessionID string) I
 
 func (openCodeAdapter) ExtractSessionID(output string) string {
 	return extractSessionID(output)
+}
+
+func (openCodeAdapter) AvailableModels(ctx context.Context, cfg config.AgentConfig) ([]string, error) {
+	return runModelListCommand(ctx, cfg, "opencode", "models")
 }

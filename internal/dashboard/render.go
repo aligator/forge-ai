@@ -86,9 +86,9 @@ func (h *Handler) baseData(r *http.Request, title, active string) pageData {
 	if h.cfg.MaxConcurrent != 1 {
 		queue += "s"
 	}
-	mode := "Internal mode off"
+	mode := "Pull requests on"
 	if !h.cfg.CreatePR {
-		mode = "Internal mode on"
+		mode = "Pull requests off"
 	}
 	snap := h.runtimeSnapshot()
 	return pageData{

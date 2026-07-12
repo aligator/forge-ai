@@ -467,7 +467,14 @@ const templates = `
 		<label class="check-row"><input type="checkbox" name="enabled" {{if .Enabled}}checked{{end}}> Enabled</label>
 		<label>
 			Model
+			{{if .SupportsModelList}}
+			<select name="model" hx-get="{{.ModelListURL}}?current={{.Model | urlquery}}" hx-trigger="load once" hx-target="this" hx-swap="innerHTML" hx-params="none">
+				<option value="">default model</option>
+				{{if .Model}}<option value="{{.Model}}" selected>{{.Model}}</option>{{end}}
+			</select>
+			{{else}}
 			<input name="model" value="{{.Model}}" placeholder="default model">
+			{{end}}
 		</label>
 		<label>
 			Args
@@ -481,8 +488,14 @@ const templates = `
 			Tool-Hints
 			<textarea name="tool_hints" rows="4">{{.ToolHints}}</textarea>
 		</label>
-		<label class="check-row"><input type="checkbox" name="allow_git_set" {{if .AllowGitSet}}checked{{end}}> Override AGENT_ALLOW_GIT</label>
-		<label class="check-row"><input type="checkbox" name="allow_git" {{if .AllowGit}}checked{{end}}> AGENT_ALLOW_GIT</label>
+		<label>
+			Git access
+			<select name="allow_git_mode">
+				<option value="inherit" {{if eq .GitMode "inherit"}}selected{{end}}>Inherit env default (AGENT_ALLOW_GIT={{.AllowGitDefault}})</option>
+				<option value="on" {{if eq .GitMode "on"}}selected{{end}}>Force on — agent may run git</option>
+				<option value="off" {{if eq .GitMode "off"}}selected{{end}}>Force off — agent may not run git</option>
+			</select>
+		</label>
 		<div class="form-actions">
 			<button class="button" type="submit">Save defaults</button>
 			<span class="muted">Token, password, API key, and secret values are rejected before saving.</span>
@@ -496,6 +509,12 @@ const templates = `
 	{{end}}
 	</div>
 </details>
+{{end}}
+
+{{define "model_options"}}
+<option value="">default model</option>
+{{if .CustomCurrent}}<option value="{{.Current}}" selected>{{.Current}}</option>{{end}}
+{{range .Models}}<option value="{{.}}"{{if eq . $.Current}} selected{{end}}>{{.}}</option>{{end}}
 {{end}}
 
 {{define "secret_presence_field"}}

@@ -118,6 +118,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /dashboard/queue/pause", h.pauseQueue)
 	mux.HandleFunc("POST /dashboard/queue/resume", h.resumeQueue)
 	mux.HandleFunc("GET /dashboard/agents", h.agents)
+	mux.HandleFunc("GET /dashboard/agents/{mention}/models", h.agentModels)
 	mux.HandleFunc("POST /dashboard/agents/{mention}/settings", h.saveAgentSettings)
 	mux.HandleFunc("POST /dashboard/agents/{mention}/settings/reset", h.resetAgentSettings)
 	mux.HandleFunc("GET /dashboard/audit", h.audit)

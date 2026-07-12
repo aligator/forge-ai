@@ -63,6 +63,9 @@ a { color: inherit; }
 .app-body { display: grid; grid-template-columns: 180px minmax(0, 1fr); }
 .sidenav {
 	min-height: calc(100vh - 56px);
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
 	padding: 18px 12px;
 	border-right: 1px solid var(--line);
 	background: #eef2f3;
@@ -257,7 +260,7 @@ tbody tr:hover { background: #fbfcfd; }
 	font-weight: 700;
 	text-transform: uppercase;
 }
-.agent-form input:not([type="checkbox"]), .agent-form textarea {
+.agent-form input:not([type="checkbox"]), .agent-form textarea, .agent-form select {
 	width: 100%;
 	min-width: 0;
 	border: 1px solid var(--line-strong);
@@ -272,6 +275,20 @@ tbody tr:hover { background: #fbfcfd; }
 .agent-form textarea {
 	resize: vertical;
 	font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+.agent-form select {
+	appearance: none;
+	-webkit-appearance: none;
+	padding-right: 34px;
+	cursor: pointer;
+	background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='12'%20height='12'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%2368727d'%20stroke-width='3'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M6%209l6%206%206-6'/%3E%3C/svg%3E");
+	background-repeat: no-repeat;
+	background-position: right 11px center;
+}
+.agent-form input:not([type="checkbox"]):focus, .agent-form textarea:focus, .agent-form select:focus {
+	outline: none;
+	border-color: var(--accent);
+	box-shadow: 0 0 0 3px var(--accent-weak);
 }
 .agent-form .check-row {
 	display: flex;
@@ -402,6 +419,7 @@ tbody tr:hover { background: #fbfcfd; }
 	.sidenav {
 		min-height: 0;
 		display: flex;
+		flex-direction: row;
 		gap: 6px;
 		overflow-x: auto;
 		padding: 10px 12px;

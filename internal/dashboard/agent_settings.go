@@ -1,16 +1,21 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
+	"codeberg.org/forge-ai/internal/agent"
 	"codeberg.org/forge-ai/internal/runstore"
 )
+
+const modelListTimeout = 15 * time.Second
 
 const maxAgentTimeout = 24 * time.Hour
 
@@ -59,6 +64,36 @@ func (h *Handler) saveAgentSettings(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/dashboard/agents?saved="+url.QueryEscape(mention), http.StatusSeeOther)
 }
 
+func (h *Handler) agentModels(w http.ResponseWriter, r *http.Request) {
+	mention := r.PathValue("mention")
+	idx, ok := h.routeForMention(mention)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	route := h.cfg.Agents[idx]
+	ctx, cancel := context.WithTimeout(r.Context(), modelListTimeout)
+	defer cancel()
+	models, supported, err := agent.ListModels(ctx, route.Agent)
+	if !supported {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		h.logger.Warn("dashboard list models failed", "mention", mention, "error", err)
+	}
+	current := strings.TrimSpace(r.URL.Query().Get("current"))
+	customCurrent := current != "" && !slices.Contains(models, current)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.tmpl.ExecuteTemplate(w, "model_options", map[string]any{
+		"Models":        models,
+		"Current":       current,
+		"CustomCurrent": customCurrent,
+	}); err != nil {
+		h.logger.Error("render model options", "mention", mention, "error", err)
+	}
+}
+
 func (h *Handler) resetAgentSettings(w http.ResponseWriter, r *http.Request) {
 	if h.store == nil {
 		http.Error(w, "run store not configured", http.StatusServiceUnavailable)
@@ -86,6 +121,17 @@ func (h *Handler) resetAgentSettings(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/dashboard/agents?reset="+url.QueryEscape(mention), http.StatusSeeOther)
 }
 
+func parseGitMode(mode string) (set, allow bool) {
+	switch mode {
+	case "on":
+		return true, true
+	case "off":
+		return true, false
+	default:
+		return false, false
+	}
+}
+
 func (h *Handler) parseAgentSettingsForm(r *http.Request, mention string) (runstore.UpsertAgentSettingsInput, error) {
 	if err := r.ParseForm(); err != nil {
 		return runstore.UpsertAgentSettingsInput{}, fmt.Errorf("parse form: %w", err)
@@ -95,6 +141,7 @@ func (h *Handler) parseAgentSettingsForm(r *http.Request, mention string) (runst
 		return runstore.UpsertAgentSettingsInput{}, errors.New("Timeout must be a Go duration such as 30m or 1h.")
 	}
 	args := strings.Fields(r.FormValue("args"))
+	allowGitSet, allowGit := parseGitMode(r.FormValue("allow_git_mode"))
 	input := runstore.UpsertAgentSettingsInput{
 		Mention:     mention,
 		Enabled:     r.FormValue("enabled") == "on",
@@ -102,8 +149,8 @@ func (h *Handler) parseAgentSettingsForm(r *http.Request, mention string) (runst
 		Args:        args,
 		Timeout:     timeout,
 		ToolHints:   strings.TrimSpace(r.FormValue("tool_hints")),
-		AllowGit:    r.FormValue("allow_git") == "on",
-		AllowGitSet: r.FormValue("allow_git_set") == "on",
+		AllowGit:    allowGit,
+		AllowGitSet: allowGitSet,
 		UpdatedBy:   actorFromRequest(r),
 	}
 	if err := h.validateAgentSettings(input); err != nil {

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"codeberg.org/forge-ai/internal/agent"
 	"codeberg.org/forge-ai/internal/config"
 	"codeberg.org/forge-ai/internal/runstore"
 	appruntime "codeberg.org/forge-ai/internal/runtime"
@@ -40,28 +41,32 @@ type agentContext struct {
 }
 
 type agentListItem struct {
-	Mention         string
-	User            string
-	Type            string
-	Bin             string
-	ArgsPreview     string
-	CommandPreview  string
-	Timeout         time.Duration
-	SettingsAction  string
-	ResetAction     string
-	Enabled         bool
-	Model           string
-	ArgsInput       string
-	TimeoutInput    string
-	ToolHints       string
-	AllowGitSet     bool
-	AllowGit        bool
-	Persisted       bool
-	UpdatedBy       string
-	UpdatedAt       time.Time
-	TokenPresent    bool
-	PasswordPresent bool
-	Validation      []validationResult
+	Mention           string
+	User              string
+	Type              string
+	Bin               string
+	ArgsPreview       string
+	CommandPreview    string
+	Timeout           time.Duration
+	SettingsAction    string
+	ResetAction       string
+	Enabled           bool
+	Model             string
+	ArgsInput         string
+	TimeoutInput      string
+	ToolHints         string
+	AllowGitSet       bool
+	AllowGit          bool
+	GitMode           string
+	AllowGitDefault   bool
+	ModelListURL      string
+	SupportsModelList bool
+	Persisted         bool
+	UpdatedBy         string
+	UpdatedAt         time.Time
+	TokenPresent      bool
+	PasswordPresent   bool
+	Validation        []validationResult
 }
 
 type validationResult struct {
@@ -279,30 +284,44 @@ func (h *Handler) agentListItem(index int, route config.AgentRoute, settings run
 		}
 	}
 	item := agentListItem{
-		Mention:         route.Mention,
-		User:            route.User,
-		Type:            firstNonEmpty(route.Agent.Type, agentBinName(route.Agent)),
-		Bin:             route.Agent.Bin,
-		ArgsPreview:     h.safePreview(strings.Join(effective.Args, " ")),
-		CommandPreview:  h.safePreview(commandPreview(command)),
-		Timeout:         effective.Timeout,
-		SettingsAction:  "/dashboard/agents/" + url.PathEscape(route.Mention) + "/settings",
-		ResetAction:     "/dashboard/agents/" + url.PathEscape(route.Mention) + "/settings/reset",
-		Enabled:         effective.Enabled,
-		Model:           modelInput,
-		ArgsInput:       argsInput,
-		TimeoutInput:    effective.Timeout.String(),
-		ToolHints:       toolHintsInput,
-		AllowGitSet:     effective.AllowGitSet,
-		AllowGit:        effective.AllowGit,
-		Persisted:       persisted,
-		UpdatedBy:       settings.UpdatedBy,
-		UpdatedAt:       settings.UpdatedAt,
-		TokenPresent:    route.Token != "" || h.cfg.ForgejoToken != "",
-		PasswordPresent: route.Password != "",
+		Mention:           route.Mention,
+		User:              route.User,
+		Type:              firstNonEmpty(route.Agent.Type, agentBinName(route.Agent)),
+		Bin:               route.Agent.Bin,
+		ArgsPreview:       h.safePreview(strings.Join(effective.Args, " ")),
+		CommandPreview:    h.safePreview(commandPreview(command)),
+		Timeout:           effective.Timeout,
+		SettingsAction:    "/dashboard/agents/" + url.PathEscape(route.Mention) + "/settings",
+		ResetAction:       "/dashboard/agents/" + url.PathEscape(route.Mention) + "/settings/reset",
+		Enabled:           effective.Enabled,
+		Model:             modelInput,
+		ArgsInput:         argsInput,
+		TimeoutInput:      effective.Timeout.String(),
+		ToolHints:         toolHintsInput,
+		AllowGitSet:       effective.AllowGitSet,
+		AllowGit:          effective.AllowGit,
+		GitMode:           gitMode(effective.AllowGitSet, effective.AllowGit),
+		AllowGitDefault:   h.cfg.AgentAllowGit,
+		ModelListURL:      "/dashboard/agents/" + url.PathEscape(route.Mention) + "/models",
+		SupportsModelList: agent.SupportsModelListing(route.Agent),
+		Persisted:         persisted,
+		UpdatedBy:         settings.UpdatedBy,
+		UpdatedAt:         settings.UpdatedAt,
+		TokenPresent:      route.Token != "" || h.cfg.ForgejoToken != "",
+		PasswordPresent:   route.Password != "",
 	}
 	item.Validation = h.agentValidation(index, route)
 	return item
+}
+
+func gitMode(set, allow bool) string {
+	if !set {
+		return "inherit"
+	}
+	if allow {
+		return "on"
+	}
+	return "off"
 }
 
 func agentSettingsFromRoute(route config.AgentRoute, toolHints string, allowGit bool) runstore.AgentSettings {
