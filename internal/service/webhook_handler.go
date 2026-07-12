@@ -9,6 +9,7 @@ import (
 
 	"codeberg.org/forge-ai/internal/config"
 	"codeberg.org/forge-ai/internal/forgejo"
+	"codeberg.org/forge-ai/internal/runstore"
 	appruntime "codeberg.org/forge-ai/internal/runtime"
 )
 
@@ -87,6 +88,16 @@ func (h *webhookHandler) Handle(ctx context.Context, event string, payload forge
 	route := h.routeForMention(mention)
 	branch := branchForTicket(h.cfg, ticket)
 	base := branchRef(firstNonEmpty(ticket.BaseBranch, ticket.DefaultBranch, "main"))
+	run, err := h.runner.createRun(ctx, payload, ticket, mention, branch, base)
+	if err != nil {
+		return err
+	}
+
+	runCtx, runCancel := context.WithCancel(context.Background())
+	h.registerRunCancel(run.ID, runCancel)
+	defer h.unregisterRunCancel(run.ID)
+	defer runCancel()
+
 	spec := appruntime.RunSpec{
 		TicketRef: ticket.Ref(),
 		Branch:    branch,
@@ -96,11 +107,7 @@ func (h *webhookHandler) Handle(ctx context.Context, event string, payload forge
 		Number:    ticket.Number,
 	}
 
-	err := h.runtime.SubmitWebhookRun(ctx, spec, func(runCtx context.Context) error {
-		run, err := h.runner.createRun(runCtx, payload, ticket, mention, branch, base)
-		if err != nil {
-			return err
-		}
+	err = h.runtime.SubmitWebhookRun(runCtx, spec, func(runCtx context.Context) error {
 		if err := postStartAckWith(runCtx, fc, ticket); err != nil {
 			h.logger.Warn("post start acknowledgement failed", "comment_id", ticket.CommentID, "error", err)
 		}
@@ -108,14 +115,33 @@ func (h *webhookHandler) Handle(ctx context.Context, event string, payload forge
 	})
 	switch {
 	case errors.Is(err, appruntime.ErrTicketActive):
+		h.runner.finishRun(ctx, run.ID, runstore.StatusFailed, err)
 		h.logger.Info("ignored webhook, ticket already active", "ticket", ticket.Ref())
 		return nil
 	case errors.Is(err, appruntime.ErrBranchActive):
+		h.runner.finishRun(ctx, run.ID, runstore.StatusFailed, err)
 		h.logger.Info("ignored webhook, branch already active", "ticket", ticket.Ref(), "branch", branch)
+		return nil
+	case errors.Is(err, context.Canceled):
+		h.runner.finishRun(context.Background(), run.ID, runstore.StatusCanceled, err)
 		return nil
 	default:
 		return err
 	}
+}
+
+func (h *webhookHandler) registerRunCancel(id string, cancel context.CancelFunc) {
+	if h == nil || h.runner == nil || h.runner.service == nil {
+		return
+	}
+	h.runner.service.registerCancel(id, cancel)
+}
+
+func (h *webhookHandler) unregisterRunCancel(id string) {
+	if h == nil || h.runner == nil || h.runner.service == nil {
+		return
+	}
+	h.runner.service.unregisterCancel(id)
 }
 
 // forgejoFor returns the Forgejo client for the given mention, falling back to the global client.
@@ -131,6 +157,9 @@ func (h *webhookHandler) forgejoFor(mention string) Forgejo {
 func (h *webhookHandler) shouldRun(payload forgejo.WebhookPayload, ticket forgejo.Ticket) bool {
 	lower := strings.ToLower(ticket.Instruction)
 	for _, route := range h.cfg.Agents {
+		if route.Disabled {
+			continue
+		}
 		if !strings.Contains(lower, strings.ToLower(route.Mention)) {
 			continue
 		}
@@ -152,6 +181,9 @@ func (h *webhookHandler) shouldRun(payload forgejo.WebhookPayload, ticket forgej
 func (h *webhookHandler) anyMentionIn(text string) bool {
 	lower := strings.ToLower(text)
 	for _, route := range h.cfg.Agents {
+		if route.Disabled {
+			continue
+		}
 		if strings.Contains(lower, strings.ToLower(route.Mention)) {
 			return true
 		}
@@ -164,6 +196,9 @@ func (h *webhookHandler) anyMentionIn(text string) bool {
 func (h *webhookHandler) findAgent(instruction string) (string, Agent) {
 	lower := strings.ToLower(instruction)
 	for _, route := range h.cfg.Agents {
+		if route.Disabled {
+			continue
+		}
 		if strings.Contains(lower, strings.ToLower(route.Mention)) {
 			key := strings.ToLower(route.Mention)
 			if ag, ok := h.agents[key]; ok {

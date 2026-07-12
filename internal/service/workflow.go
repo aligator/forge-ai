@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,6 +24,7 @@ type workflowRunner struct {
 	git            Git
 	runStore       runstore.RunStore
 	logger         *slog.Logger
+	service        *Service
 }
 
 type workflowState struct {
@@ -74,6 +76,10 @@ func (r *workflowRunner) prepareWorkspace(ctx context.Context, fc Forgejo, state
 	cloneURL := rewriteCloneURL(state.ticket.CloneURL, r.cfg.CloneURLBase)
 	workdir, err := r.git.Prepare(ctx, r.cfg.WorkspaceDir, cloneURL, token, state.ticket.Owner, state.ticket.Repo, state.branch, state.base, identity)
 	if err != nil {
+		if ctx.Err() != nil {
+			r.finishRun(context.Background(), state.run.ID, runstore.StatusCanceled, err)
+			return err
+		}
 		r.failWorkflow(ctx, fc, *state, err)
 		return err
 	}
@@ -86,16 +92,39 @@ func (r *workflowRunner) prepareWorkspace(ctx context.Context, fc Forgejo, state
 func (r *workflowRunner) executeAgent(ctx context.Context, fc Forgejo, ag Agent, state *workflowState) error {
 	r.logWorkspaceFiles(state.workdir, "before agent run")
 	sessionID := sessionIDFromInstruction(state.ticket.Instruction, r.cfg.Agents)
-	result, err := r.runAgent(ctx, ag, state.workdir, prompt(state.ticket, state.branch, state.base, r.cfg.AgentAllowGit, r.cfg.AgentToolHints), sessionID, state.run.ID)
+	allowGit, toolHints := r.agentPromptDefaults(state.run.AgentMention)
+	result, err := r.runAgent(ctx, ag, state.workdir, prompt(state.ticket, state.branch, state.base, allowGit, toolHints), sessionID, state.run.ID)
 	state.result = result
 	r.logWorkspaceFiles(state.workdir, "after agent run")
 	if err != nil {
+		if ctx.Err() != nil {
+			r.finishRun(context.Background(), state.run.ID, runstore.StatusCanceled, err)
+			return err
+		}
 		err = fmt.Errorf("agent failed: %w", err)
 		r.failWorkflow(ctx, fc, *state, err)
 		return err
 	}
 	r.addRunEvent(ctx, state.run.ID, "agent_finished", "agent completed")
 	return nil
+}
+
+func (r *workflowRunner) agentPromptDefaults(mention string) (bool, string) {
+	allowGit := r.cfg.AgentAllowGit
+	toolHints := r.cfg.AgentToolHints
+	for _, route := range r.cfg.Agents {
+		if !strings.EqualFold(route.Mention, mention) {
+			continue
+		}
+		if route.Agent.AllowGitSet {
+			allowGit = route.Agent.AllowGit
+		}
+		if route.Agent.ToolHints != "" {
+			toolHints = route.Agent.ToolHints
+		}
+		break
+	}
+	return allowGit, toolHints
 }
 
 func (r *workflowRunner) commitAndPush(ctx context.Context, fc Forgejo, state *workflowState) error {
@@ -105,6 +134,10 @@ func (r *workflowRunner) commitAndPush(ctx context.Context, fc Forgejo, state *w
 	}
 	committed, err := r.git.CommitIfDirty(ctx, state.workdir, commitMsg)
 	if err != nil {
+		if ctx.Err() != nil {
+			r.finishRun(context.Background(), state.run.ID, runstore.StatusCanceled, err)
+			return err
+		}
 		r.failWorkflow(ctx, fc, *state, err)
 		return err
 	}
@@ -112,6 +145,10 @@ func (r *workflowRunner) commitAndPush(ctx context.Context, fc Forgejo, state *w
 	r.addRunEvent(ctx, state.run.ID, "commit_checked", fmt.Sprintf("committed=%t", committed))
 
 	if err := r.git.Push(ctx, state.workdir, state.branch); err != nil {
+		if ctx.Err() != nil {
+			r.finishRun(context.Background(), state.run.ID, runstore.StatusCanceled, err)
+			return err
+		}
 		r.failWorkflow(ctx, fc, *state, err)
 		return err
 	}
@@ -189,6 +226,13 @@ func (r *workflowRunner) createRun(ctx context.Context, payload forgejo.WebhookP
 	}
 	r.addRunEvent(ctx, run.ID, "queued", "webhook accepted")
 	r.addRunLink(ctx, run.ID, "ticket", ticket.HTMLURL, ticket.Ref())
+	if ticket.CommentID != 0 {
+		r.addRunLink(ctx, run.ID, "trigger_comment", ticket.HTMLURL+"#issuecomment-"+strconv.FormatInt(ticket.CommentID, 10), "Trigger comment")
+	}
+	if r.cfg.ForgejoURL != "" {
+		branchURL := strings.TrimRight(r.cfg.ForgejoURL, "/") + "/" + ticket.Owner + "/" + ticket.Repo + "/src/branch/" + url.PathEscape(branch)
+		r.addRunLink(ctx, run.ID, "branch", branchURL, branch)
+	}
 	return run, nil
 }
 
@@ -232,7 +276,7 @@ func (r *workflowRunner) finishRun(ctx context.Context, runID string, status run
 	r.addRunEvent(ctx, runID, string(status), message)
 }
 
-// recordAgentResult is used by the legacy (non-streaming) agent path. It writes
+// recordAgentResult is used by the non-streaming agent path. It writes
 // the full tail output as a single "combined" log chunk. The streaming path uses
 // recordAgentSession only — per-chunk stdout/stderr are written by runLogWriter
 // during execution, so no combined chunk is produced for streaming agents.

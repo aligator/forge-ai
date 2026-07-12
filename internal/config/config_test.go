@@ -28,6 +28,8 @@ func TestLoadAgentRoutesUsesPerRouteGitIdentity(t *testing.T) {
 func TestLoadAgentRoutesFallsBackToDefaultGitIdentity(t *testing.T) {
 	t.Setenv("AGENT_0_USER", "claude")
 	t.Setenv("AGENT_0_BIN", "claude")
+	t.Setenv("AGENT_0_GIT_USER_NAME", "")
+	t.Setenv("AGENT_0_GIT_USER_EMAIL", "")
 	t.Setenv("AGENT_1_USER", "")
 
 	routes := loadAgentRoutes(GitIdentity{

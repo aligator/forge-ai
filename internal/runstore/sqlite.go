@@ -3,6 +3,7 @@ package runstore
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -88,10 +89,31 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			url TEXT NOT NULL,
 			label TEXT NOT NULL DEFAULT ''
 		)`,
+		`CREATE TABLE IF NOT EXISTS audit_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			ts TEXT NOT NULL,
+			actor TEXT NOT NULL,
+			action TEXT NOT NULL,
+			target_type TEXT NOT NULL,
+			target_id TEXT NOT NULL,
+			data_json TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE TABLE IF NOT EXISTS agent_settings (
+			agent_mention TEXT PRIMARY KEY,
+			enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+			model TEXT NOT NULL DEFAULT '',
+			args_json TEXT NOT NULL DEFAULT '[]',
+			timeout_seconds INTEGER NOT NULL,
+			tool_hints TEXT NOT NULL DEFAULT '',
+			allow_git INTEGER CHECK (allow_git IN (0, 1)),
+			updated_at TEXT NOT NULL,
+			updated_by TEXT NOT NULL DEFAULT ''
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_runs_ticket ON runs(owner, repo, ticket_kind, ticket_number)`,
 		`CREATE INDEX IF NOT EXISTS idx_run_events_run_id ON run_events(run_id, id)`,
 		`CREATE INDEX IF NOT EXISTS idx_run_logs_run_id ON run_logs(run_id, id)`,
 		`CREATE INDEX IF NOT EXISTS idx_run_links_run_id ON run_links(run_id, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_events_ts ON audit_events(ts, id)`,
 	}
 	for _, stmt := range statements {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
@@ -215,6 +237,90 @@ func (s *SQLiteStore) AddLink(ctx context.Context, in LinkInput) error {
 	return nil
 }
 
+func (s *SQLiteStore) AddAuditEvent(ctx context.Context, in AuditEventInput) error {
+	if in.Time.IsZero() {
+		in.Time = time.Now().UTC()
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO audit_events (ts, actor, action, target_type, target_id, data_json) VALUES (?, ?, ?, ?, ?, ?)`,
+		formatTime(in.Time), in.Actor, in.Action, in.TargetType, in.TargetID, in.DataJSON)
+	if err != nil {
+		return fmt.Errorf("add audit event: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) UpsertAgentSettings(ctx context.Context, in UpsertAgentSettingsInput) (AgentSettings, error) {
+	if in.UpdatedAt.IsZero() {
+		in.UpdatedAt = time.Now().UTC()
+	}
+	argsJSON, err := json.Marshal(in.Args)
+	if err != nil {
+		return AgentSettings{}, fmt.Errorf("encode agent settings args: %w", err)
+	}
+	var allowGit any
+	if in.AllowGitSet {
+		if in.AllowGit {
+			allowGit = 1
+		} else {
+			allowGit = 0
+		}
+	}
+	timeoutSeconds := int64(in.Timeout.Round(time.Second) / time.Second)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO agent_settings (
+		agent_mention, enabled, model, args_json, timeout_seconds, tool_hints, allow_git, updated_at, updated_by
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(agent_mention) DO UPDATE SET
+		enabled = excluded.enabled,
+		model = excluded.model,
+		args_json = excluded.args_json,
+		timeout_seconds = excluded.timeout_seconds,
+		tool_hints = excluded.tool_hints,
+		allow_git = excluded.allow_git,
+		updated_at = excluded.updated_at,
+		updated_by = excluded.updated_by`,
+		in.Mention, boolInt(in.Enabled), in.Model, string(argsJSON), timeoutSeconds, in.ToolHints, allowGit, formatTime(in.UpdatedAt), in.UpdatedBy)
+	if err != nil {
+		return AgentSettings{}, fmt.Errorf("upsert agent settings: %w", err)
+	}
+	return s.GetAgentSettings(ctx, in.Mention)
+}
+
+func (s *SQLiteStore) GetAgentSettings(ctx context.Context, mention string) (AgentSettings, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT agent_mention, enabled, model, args_json, timeout_seconds, tool_hints, allow_git, updated_at, updated_by
+		FROM agent_settings WHERE agent_mention = ?`, mention)
+	settings, err := scanAgentSettings(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AgentSettings{}, ErrAgentSettingsNotFound
+	}
+	return settings, err
+}
+
+func (s *SQLiteStore) DeleteAgentSettings(ctx context.Context, mention string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM agent_settings WHERE agent_mention = ?`, mention)
+	if err != nil {
+		return fmt.Errorf("delete agent settings: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) ListAgentSettings(ctx context.Context) ([]AgentSettings, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT agent_mention, enabled, model, args_json, timeout_seconds, tool_hints, allow_git, updated_at, updated_by
+		FROM agent_settings ORDER BY agent_mention`)
+	if err != nil {
+		return nil, fmt.Errorf("list agent settings: %w", err)
+	}
+	defer rows.Close()
+	var settings []AgentSettings
+	for rows.Next() {
+		item, err := scanAgentSettings(rows)
+		if err != nil {
+			return nil, err
+		}
+		settings = append(settings, item)
+	}
+	return settings, rows.Err()
+}
+
 func (s *SQLiteStore) GetRun(ctx context.Context, id string) (Run, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT id, kind, status, owner, repo, ticket_kind, ticket_number, branch, base_branch,
 		agent_mention, agent_type, session_id, parent_run_id, started_at, finished_at, error, created_by
@@ -222,8 +328,63 @@ func (s *SQLiteStore) GetRun(ctx context.Context, id string) (Run, error) {
 	return scanRun(row)
 }
 
+func (s *SQLiteStore) ListRuns(ctx context.Context, opts ListRunsOptions) ([]Run, error) {
+	limit := opts.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+
+	query := `SELECT id, kind, status, owner, repo, ticket_kind, ticket_number, branch, base_branch,
+		agent_mention, agent_type, session_id, parent_run_id, started_at, finished_at, error, created_by
+		FROM runs`
+	args := []any{}
+	if opts.Status != "" {
+		query += ` WHERE status = ?`
+		args = append(args, opts.Status)
+	}
+	orderBy := "started_at"
+	switch opts.Sort {
+	case "", "started":
+		orderBy = "started_at"
+	case "finished":
+		orderBy = "finished_at"
+	case "status":
+		orderBy = "status"
+	case "agent":
+		orderBy = "agent_mention"
+	case "ticket":
+		orderBy = "owner, repo, ticket_kind, ticket_number"
+	}
+	direction := "ASC"
+	if opts.Desc {
+		direction = "DESC"
+	}
+	query += ` ORDER BY ` + orderBy + ` ` + direction + `, id DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list runs: %w", err)
+	}
+	defer rows.Close()
+
+	var runs []Run
+	for rows.Next() {
+		run, err := scanRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
+}
+
 func (s *SQLiteStore) ListEvents(ctx context.Context, runID string) ([]Event, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, run_id, ts, type, message, data_json FROM run_events WHERE run_id = ? ORDER BY id`, runID)
+	return s.ListEventsSince(ctx, runID, 0)
+}
+
+func (s *SQLiteStore) ListEventsSince(ctx context.Context, runID string, sinceID int64) ([]Event, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, run_id, ts, type, message, data_json FROM run_events WHERE run_id = ? AND id > ? ORDER BY id`, runID, sinceID)
 	if err != nil {
 		return nil, fmt.Errorf("list run events: %w", err)
 	}
@@ -242,7 +403,11 @@ func (s *SQLiteStore) ListEvents(ctx context.Context, runID string) ([]Event, er
 }
 
 func (s *SQLiteStore) ListLogChunks(ctx context.Context, runID string) ([]LogChunk, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, run_id, ts, stream, chunk FROM run_logs WHERE run_id = ? ORDER BY id`, runID)
+	return s.ListLogChunksSince(ctx, runID, 0)
+}
+
+func (s *SQLiteStore) ListLogChunksSince(ctx context.Context, runID string, sinceID int64) ([]LogChunk, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, run_id, ts, stream, chunk FROM run_logs WHERE run_id = ? AND id > ? ORDER BY id`, runID, sinceID)
 	if err != nil {
 		return nil, fmt.Errorf("list run log chunks: %w", err)
 	}
@@ -277,6 +442,29 @@ func (s *SQLiteStore) ListLinks(ctx context.Context, runID string) ([]Link, erro
 	return links, rows.Err()
 }
 
+func (s *SQLiteStore) ListAuditEvents(ctx context.Context, opts ListAuditEventsOptions) ([]AuditEvent, error) {
+	limit := opts.Limit
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, ts, actor, action, target_type, target_id, data_json FROM audit_events ORDER BY ts DESC, id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list audit events: %w", err)
+	}
+	defer rows.Close()
+	var events []AuditEvent
+	for rows.Next() {
+		var event AuditEvent
+		var ts string
+		if err := rows.Scan(&event.ID, &ts, &event.Actor, &event.Action, &event.TargetType, &event.TargetID, &event.DataJSON); err != nil {
+			return nil, err
+		}
+		event.Time = parseTime(ts)
+		events = append(events, event)
+	}
+	return events, rows.Err()
+}
+
 type runScanner interface {
 	Scan(...any) error
 }
@@ -294,6 +482,36 @@ func scanRun(row runScanner) (Run, error) {
 		run.FinishedAt = parseTime(finishedAt.String)
 	}
 	return run, nil
+}
+
+func scanAgentSettings(row runScanner) (AgentSettings, error) {
+	var settings AgentSettings
+	var enabled int
+	var argsJSON string
+	var timeoutSeconds int64
+	var allowGit sql.NullInt64
+	var updatedAt string
+	if err := row.Scan(&settings.Mention, &enabled, &settings.Model, &argsJSON, &timeoutSeconds, &settings.ToolHints, &allowGit, &updatedAt, &settings.UpdatedBy); err != nil {
+		return AgentSettings{}, err
+	}
+	settings.Enabled = enabled == 1
+	if err := json.Unmarshal([]byte(argsJSON), &settings.Args); err != nil {
+		return AgentSettings{}, fmt.Errorf("decode agent settings args: %w", err)
+	}
+	settings.Timeout = time.Duration(timeoutSeconds) * time.Second
+	if allowGit.Valid {
+		settings.AllowGitSet = true
+		settings.AllowGit = allowGit.Int64 == 1
+	}
+	settings.UpdatedAt = parseTime(updatedAt)
+	return settings, nil
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func formatTime(t time.Time) string {

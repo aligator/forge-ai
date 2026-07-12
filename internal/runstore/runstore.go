@@ -8,6 +8,7 @@ import (
 )
 
 var ErrInvalidStatusTransition = errors.New("invalid run status transition")
+var ErrAgentSettingsNotFound = errors.New("agent settings not found")
 
 type RunKind string
 
@@ -29,11 +30,20 @@ const (
 
 type RunStore interface {
 	CreateRun(context.Context, CreateRunInput) (Run, error)
+	GetRun(context.Context, string) (Run, error)
 	UpdateRunStatus(context.Context, string, Status, time.Time, string) error
 	SetSessionID(context.Context, string, string) error
 	AddEvent(context.Context, EventInput) error
 	AddLogChunk(context.Context, LogChunkInput) error
 	AddLink(context.Context, LinkInput) error
+	AddAuditEvent(context.Context, AuditEventInput) error
+}
+
+type ListRunsOptions struct {
+	Limit  int
+	Status Status
+	Sort   string
+	Desc   bool
 }
 
 type Run struct {
@@ -96,6 +106,45 @@ type LinkInput struct {
 	Label string
 }
 
+type AuditEventInput struct {
+	Time       time.Time
+	Actor      string
+	Action     string
+	TargetType string
+	TargetID   string
+	DataJSON   string
+}
+
+type AgentSettings struct {
+	Mention     string
+	Enabled     bool
+	Model       string
+	Args        []string
+	Timeout     time.Duration
+	ToolHints   string
+	AllowGit    bool
+	AllowGitSet bool
+	UpdatedAt   time.Time
+	UpdatedBy   string
+}
+
+type UpsertAgentSettingsInput struct {
+	Mention     string
+	Enabled     bool
+	Model       string
+	Args        []string
+	Timeout     time.Duration
+	ToolHints   string
+	AllowGit    bool
+	AllowGitSet bool
+	UpdatedAt   time.Time
+	UpdatedBy   string
+}
+
+type ListAuditEventsOptions struct {
+	Limit int
+}
+
 type Event struct {
 	ID       int64
 	RunID    string
@@ -119,6 +168,16 @@ type Link struct {
 	Type  string
 	URL   string
 	Label string
+}
+
+type AuditEvent struct {
+	ID         int64
+	Time       time.Time
+	Actor      string
+	Action     string
+	TargetType string
+	TargetID   string
+	DataJSON   string
 }
 
 func validateStatusTransition(from, to Status) error {

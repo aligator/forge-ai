@@ -95,6 +95,97 @@ func TestSQLiteStorePersistsRunsEventsLogsAndLinks(t *testing.T) {
 	}
 }
 
+func TestSQLiteStorePersistsAuditEvents(t *testing.T) {
+	ctx := context.Background()
+	store, err := OpenSQLite(ctx, filepath.Join(t.TempDir(), "runstore.sqlite"))
+	if err != nil {
+		t.Fatalf("OpenSQLite() error = %v", err)
+	}
+	defer store.Close()
+
+	ts := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	if err := store.AddAuditEvent(ctx, AuditEventInput{
+		Time:       ts,
+		Actor:      "alice",
+		Action:     "run.cancel",
+		TargetType: "run",
+		TargetID:   "run-1",
+		DataJSON:   `{"reason":"operator"}`,
+	}); err != nil {
+		t.Fatalf("AddAuditEvent() error = %v", err)
+	}
+
+	events, err := store.ListAuditEvents(ctx, ListAuditEventsOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListAuditEvents() error = %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("audit events = %d, want 1", len(events))
+	}
+	got := events[0]
+	if got.Actor != "alice" || got.Action != "run.cancel" || got.TargetID != "run-1" || got.DataJSON != `{"reason":"operator"}` {
+		t.Fatalf("audit event = %+v", got)
+	}
+}
+
+func TestSQLiteStorePersistsAgentSettings(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "runstore.sqlite")
+	store, err := OpenSQLite(ctx, path)
+	if err != nil {
+		t.Fatalf("OpenSQLite() error = %v", err)
+	}
+	saved, err := store.UpsertAgentSettings(ctx, UpsertAgentSettingsInput{
+		Mention:     "@codex",
+		Enabled:     true,
+		Model:       "gpt-test",
+		Args:        []string{"--model", "gpt-test"},
+		Timeout:     42 * time.Minute,
+		ToolHints:   "- use rtk",
+		AllowGit:    true,
+		AllowGitSet: true,
+		UpdatedBy:   "alice",
+	})
+	if err != nil {
+		t.Fatalf("UpsertAgentSettings() error = %v", err)
+	}
+	if saved.Mention != "@codex" || !saved.AllowGitSet {
+		t.Fatalf("saved settings = %+v", saved)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reopened, err := OpenSQLite(ctx, path)
+	if err != nil {
+		t.Fatalf("reopen OpenSQLite() error = %v", err)
+	}
+	defer reopened.Close()
+	got, err := reopened.GetAgentSettings(ctx, "@codex")
+	if err != nil {
+		t.Fatalf("GetAgentSettings() error = %v", err)
+	}
+	if !got.Enabled || got.Model != "gpt-test" || got.Timeout != 42*time.Minute || got.ToolHints != "- use rtk" || !got.AllowGit || !got.AllowGitSet || got.UpdatedBy != "alice" {
+		t.Fatalf("settings = %+v", got)
+	}
+	if len(got.Args) != 2 || got.Args[0] != "--model" || got.Args[1] != "gpt-test" {
+		t.Fatalf("args = %#v", got.Args)
+	}
+	all, err := reopened.ListAgentSettings(ctx)
+	if err != nil {
+		t.Fatalf("ListAgentSettings() error = %v", err)
+	}
+	if len(all) != 1 || all[0].Mention != "@codex" {
+		t.Fatalf("all settings = %+v", all)
+	}
+	if err := reopened.DeleteAgentSettings(ctx, "@codex"); err != nil {
+		t.Fatalf("DeleteAgentSettings() error = %v", err)
+	}
+	if _, err := reopened.GetAgentSettings(ctx, "@codex"); !errors.Is(err, ErrAgentSettingsNotFound) {
+		t.Fatalf("GetAgentSettings() after delete error = %v, want %v", err, ErrAgentSettingsNotFound)
+	}
+}
+
 func TestSQLiteStoreRejectsInvalidStatusTransition(t *testing.T) {
 	ctx := context.Background()
 	store, err := OpenSQLite(ctx, filepath.Join(t.TempDir(), "runstore.sqlite"))
@@ -124,5 +215,107 @@ func TestSQLiteStoreRejectsInvalidStatusTransition(t *testing.T) {
 	}
 	if got.Status != StatusQueued {
 		t.Fatalf("status = %s, want queued", got.Status)
+	}
+}
+
+func TestSQLiteStoreAllowsQueuedAndRunningCancelTransitions(t *testing.T) {
+	ctx := context.Background()
+	store, err := OpenSQLite(ctx, filepath.Join(t.TempDir(), "runstore.sqlite"))
+	if err != nil {
+		t.Fatalf("OpenSQLite() error = %v", err)
+	}
+	defer store.Close()
+
+	queued, err := store.CreateRun(ctx, CreateRunInput{
+		Owner:        "ac",
+		Repo:         "demo",
+		TicketKind:   "issue",
+		TicketNumber: 3,
+		Branch:       "queued",
+		BaseBranch:   "main",
+		AgentMention: "@codex",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun(queued) error = %v", err)
+	}
+	if err := store.UpdateRunStatus(ctx, queued.ID, StatusCanceled, time.Now(), "operator canceled"); err != nil {
+		t.Fatalf("UpdateRunStatus(queued->canceled) error = %v", err)
+	}
+
+	running, err := store.CreateRun(ctx, CreateRunInput{
+		Owner:        "ac",
+		Repo:         "demo",
+		TicketKind:   "issue",
+		TicketNumber: 4,
+		Branch:       "running",
+		BaseBranch:   "main",
+		AgentMention: "@codex",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun(running) error = %v", err)
+	}
+	if err := store.UpdateRunStatus(ctx, running.ID, StatusRunning, time.Time{}, ""); err != nil {
+		t.Fatalf("UpdateRunStatus(queued->running) error = %v", err)
+	}
+	if err := store.UpdateRunStatus(ctx, running.ID, StatusCanceled, time.Now(), "operator canceled"); err != nil {
+		t.Fatalf("UpdateRunStatus(running->canceled) error = %v", err)
+	}
+}
+
+func TestSQLiteStoreListRunsFiltersAndSorts(t *testing.T) {
+	ctx := context.Background()
+	store, err := OpenSQLite(ctx, filepath.Join(t.TempDir(), "runstore.sqlite"))
+	if err != nil {
+		t.Fatalf("OpenSQLite() error = %v", err)
+	}
+	defer store.Close()
+
+	start := time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
+	first, err := store.CreateRun(ctx, CreateRunInput{
+		Status:       StatusQueued,
+		Owner:        "ac",
+		Repo:         "demo",
+		TicketKind:   "issue",
+		TicketNumber: 1,
+		Branch:       "one",
+		BaseBranch:   "main",
+		AgentMention: "@claude",
+		StartedAt:    start,
+	})
+	if err != nil {
+		t.Fatalf("CreateRun(first) error = %v", err)
+	}
+	second, err := store.CreateRun(ctx, CreateRunInput{
+		Status:       StatusQueued,
+		Owner:        "ac",
+		Repo:         "demo",
+		TicketKind:   "issue",
+		TicketNumber: 2,
+		Branch:       "two",
+		BaseBranch:   "main",
+		AgentMention: "@codex",
+		StartedAt:    start.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CreateRun(second) error = %v", err)
+	}
+	if err := store.UpdateRunStatus(ctx, first.ID, StatusRunning, time.Time{}, ""); err != nil {
+		t.Fatalf("UpdateRunStatus(first) error = %v", err)
+	}
+
+	runs, err := store.ListRuns(ctx, ListRunsOptions{Status: StatusQueued, Sort: "agent", Desc: false})
+	if err != nil {
+		t.Fatalf("ListRuns() error = %v", err)
+	}
+	if len(runs) != 1 || runs[0].ID != second.ID {
+		t.Fatalf("queued runs = %+v, want only %s", runs, second.ID)
+	}
+
+	runs, err = store.ListRuns(ctx, ListRunsOptions{Sort: "agent", Desc: false})
+	if err != nil {
+		t.Fatalf("ListRuns(agent) error = %v", err)
+	}
+	if len(runs) != 2 || runs[0].AgentMention != "@claude" || runs[1].AgentMention != "@codex" {
+		t.Fatalf("agent-sorted runs = %+v", runs)
 	}
 }

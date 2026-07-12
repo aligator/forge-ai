@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
+	"sync"
 	"time"
 
 	"codeberg.org/forge-ai/internal/agent"
@@ -127,16 +130,35 @@ func (g *recordingGit) Push(context.Context, string, string) error {
 }
 
 type recordingRunStore struct {
+	mu       sync.Mutex
 	runs     []runstore.Run
 	statuses []runstore.Status
 	events   []runstore.EventInput
 	logs     []runstore.LogChunkInput
 	links    []runstore.LinkInput
+	audit    []runstore.AuditEventInput
+}
+
+func (s *recordingRunStore) GetRun(_ context.Context, id string) (runstore.Run, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, run := range s.runs {
+		if run.ID == id {
+			return run, nil
+		}
+	}
+	return runstore.Run{}, sql.ErrNoRows
 }
 
 func (s *recordingRunStore) CreateRun(_ context.Context, in runstore.CreateRunInput) (runstore.Run, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := in.ID
+	if id == "" {
+		id = fmt.Sprintf("run-%d", len(s.runs)+1)
+	}
 	run := runstore.Run{
-		ID:           "run-1",
+		ID:           id,
 		Kind:         in.Kind,
 		Status:       in.Status,
 		Owner:        in.Owner,
@@ -147,6 +169,8 @@ func (s *recordingRunStore) CreateRun(_ context.Context, in runstore.CreateRunIn
 		BaseBranch:   in.BaseBranch,
 		AgentMention: in.AgentMention,
 		AgentType:    in.AgentType,
+		SessionID:    in.SessionID,
+		ParentRunID:  in.ParentRunID,
 		StartedAt:    in.StartedAt,
 		CreatedBy:    in.CreatedBy,
 	}
@@ -155,6 +179,8 @@ func (s *recordingRunStore) CreateRun(_ context.Context, in runstore.CreateRunIn
 }
 
 func (s *recordingRunStore) UpdateRunStatus(_ context.Context, id string, status runstore.Status, finishedAt time.Time, message string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for i := range s.runs {
 		if s.runs[i].ID == id {
 			s.runs[i].Status = status
@@ -167,6 +193,8 @@ func (s *recordingRunStore) UpdateRunStatus(_ context.Context, id string, status
 }
 
 func (s *recordingRunStore) SetSessionID(_ context.Context, id, sessionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for i := range s.runs {
 		if s.runs[i].ID == id {
 			s.runs[i].SessionID = sessionID
@@ -176,21 +204,36 @@ func (s *recordingRunStore) SetSessionID(_ context.Context, id, sessionID string
 }
 
 func (s *recordingRunStore) AddEvent(_ context.Context, in runstore.EventInput) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.events = append(s.events, in)
 	return nil
 }
 
 func (s *recordingRunStore) AddLogChunk(_ context.Context, in runstore.LogChunkInput) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.logs = append(s.logs, in)
 	return nil
 }
 
 func (s *recordingRunStore) AddLink(_ context.Context, in runstore.LinkInput) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.links = append(s.links, in)
 	return nil
 }
 
+func (s *recordingRunStore) AddAuditEvent(_ context.Context, in runstore.AuditEventInput) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.audit = append(s.audit, in)
+	return nil
+}
+
 func (s *recordingRunStore) hasEvent(eventType string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for _, event := range s.events {
 		if event.Type == eventType {
 			return true
@@ -200,6 +243,8 @@ func (s *recordingRunStore) hasEvent(eventType string) bool {
 }
 
 func (s *recordingRunStore) hasLink(linkType, url string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for _, link := range s.links {
 		if link.Type == linkType && link.URL == url {
 			return true
