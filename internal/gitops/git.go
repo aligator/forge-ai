@@ -98,21 +98,13 @@ func (g *Git) Prepare(ctx context.Context, workspaceRoot, cloneURL, token, owner
 
 	remoteBranchExists := g.RemoteBranchExists(ctx, workdir, branch)
 	if remoteBranchExists {
-		if _, err := run(ctx, workdir, "git", "checkout", branch); err != nil {
-			if _, err := run(ctx, workdir, "git", "checkout", "-b", branch, g.cfg.RemoteName+"/"+branch); err != nil {
-				return "", err
-			}
-		}
-		if _, err := run(ctx, workdir, "git", "pull", "--ff-only", g.cfg.RemoteName, branch); err != nil {
+		if err := g.forceSyncBranch(ctx, workdir, branch); err != nil {
 			return "", err
 		}
 		return workdir, nil
 	}
 
-	if _, err := run(ctx, workdir, "git", "checkout", "-B", baseBranch, g.cfg.RemoteName+"/"+baseBranch); err != nil {
-		return "", err
-	}
-	if _, err := run(ctx, workdir, "git", "pull", "--ff-only", g.cfg.RemoteName, baseBranch); err != nil {
+	if err := g.forceSyncBranch(ctx, workdir, baseBranch); err != nil {
 		return "", err
 	}
 	if _, err := run(ctx, workdir, "git", "checkout", "-B", branch); err != nil {
@@ -120,6 +112,21 @@ func (g *Git) Prepare(ctx context.Context, workspaceRoot, cloneURL, token, owner
 	}
 
 	return workdir, nil
+}
+
+func (g *Git) forceSyncBranch(ctx context.Context, workdir, branch string) error {
+	branch = BranchRefName(branch)
+	remoteRef := g.cfg.RemoteName + "/" + branch
+	if _, err := run(ctx, workdir, "git", "checkout", "-B", branch, remoteRef); err != nil {
+		return err
+	}
+	if _, err := run(ctx, workdir, "git", "reset", "--hard", remoteRef); err != nil {
+		return err
+	}
+	if _, err := run(ctx, workdir, "git", "clean", "-fd"); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (g *Git) identity(identity config.GitIdentity) config.GitIdentity {
