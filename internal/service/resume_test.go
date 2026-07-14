@@ -267,15 +267,15 @@ func TestManualResumeWorkspaceModeExistingWorkspace(t *testing.T) {
 		}
 	}
 
-	if gitPrepared {
-		t.Fatal("git.Prepare should not be called for existing_workspace mode")
+	if !gitPrepared {
+		t.Fatal("git.Prepare should be called for existing_workspace mode")
 	}
-	if agentWorkdir != existingWorkdir {
-		t.Fatalf("agent workdir = %q, want %q", agentWorkdir, existingWorkdir)
+	if agentWorkdir != git.workdir {
+		t.Fatalf("agent workdir = %q, want %q", agentWorkdir, git.workdir)
 	}
 }
 
-func TestManualResumeWorkspaceModeExistingWorkspaceRequiresCheckout(t *testing.T) {
+func TestManualResumeWorkspaceModeExistingWorkspacePreparesWorkspace(t *testing.T) {
 	store := &recordingRunStore{}
 	parentRun := runstore.Run{
 		ID:           "parent-run-missing-workspace",
@@ -314,15 +314,12 @@ func TestManualResumeWorkspaceModeExistingWorkspaceRequiresCheckout(t *testing.T
 	deadline := time.After(5 * time.Second)
 	for {
 		run, _ := store.GetRun(context.Background(), runID)
-		if run.Status == runstore.StatusFailed {
-			if run.Error == "" {
-				t.Fatal("failed run did not record an error")
-			}
+		if run.Status == runstore.StatusSuccess {
 			break
 		}
 		select {
 		case <-deadline:
-			t.Fatal("timed out waiting for failed status")
+			t.Fatal("timed out waiting for success status")
 		case <-time.After(10 * time.Millisecond):
 		}
 	}

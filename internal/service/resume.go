@@ -150,12 +150,12 @@ func (r *workflowRunner) prepareResumeWorkspace(ctx context.Context, parentRun r
 		return workdir, func() { r.removeWorkspace(workdir) }, nil
 	}
 	if in.WorkspaceMode == WorkspaceModeExistingWorkspace {
-		workdir := resumeWorkspacePath(r.cfg.WorkspaceDir, parentRun)
-		if _, err := os.Stat(filepath.Join(workdir, ".git")); err != nil {
-			if os.IsNotExist(err) {
-				return "", noop, fmt.Errorf("existing workspace not available: %s", workdir)
-			}
-			return "", noop, fmt.Errorf("inspect existing workspace: %w", err)
+		token := r.tokenForMention(in.AgentMention)
+		cloneURL := strings.TrimRight(r.cfg.ForgejoURL, "/") + "/" + parentRun.Owner + "/" + parentRun.Repo + ".git"
+		cloneURL = rewriteCloneURL(cloneURL, r.cfg.CloneURLBase)
+		workdir, err := r.git.Prepare(ctx, r.cfg.WorkspaceDir, cloneURL, token, parentRun.Owner, parentRun.Repo, parentRun.Branch, parentRun.BaseBranch, identity)
+		if err != nil {
+			return "", noop, fmt.Errorf("prepare existing workspace: %w", err)
 		}
 		return workdir, noop, nil
 	}
