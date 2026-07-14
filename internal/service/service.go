@@ -136,8 +136,48 @@ func (s *Service) CancelRunAs(ctx context.Context, id, actor string) bool {
 	ok := s.cancelRun(id)
 	if ok {
 		s.audit(ctx, actor, "run.cancel", "run", id, "")
+		return true
 	}
-	return ok
+	if s.cancelStaleRun(ctx, id) {
+		s.audit(ctx, actor, "run.cancel", "run", id, `{"mode":"stale"}`)
+		return true
+	}
+	return false
+}
+
+func (s *Service) cancelStaleRun(ctx context.Context, id string) bool {
+	if s.handler == nil || s.handler.runner == nil || s.handler.runner.runStore == nil {
+		return false
+	}
+	store := s.handler.runner.runStore
+	run, err := store.GetRun(ctx, id)
+	if err != nil {
+		if s.handler.logger != nil {
+			s.handler.logger.Warn("get stale run for cancel failed", "run_id", id, "error", err)
+		}
+		return false
+	}
+	switch run.Status {
+	case runstore.StatusQueued, runstore.StatusRunning:
+	default:
+		return false
+	}
+	message := "manually canceled stale run; no live runtime cancel handle"
+	if err := store.UpdateRunStatus(ctx, id, runstore.StatusCanceled, timeNow(), message); err != nil {
+		if s.handler.logger != nil {
+			s.handler.logger.Warn("mark stale run canceled failed", "run_id", id, "error", err)
+		}
+		return false
+	}
+	if err := store.AddEvent(ctx, runstore.EventInput{
+		Time:    timeNow(),
+		RunID:   id,
+		Type:    "canceled",
+		Message: message,
+	}); err != nil && s.handler.logger != nil {
+		s.handler.logger.Warn("record stale cancel event failed", "run_id", id, "error", err)
+	}
+	return true
 }
 
 func (s *Service) PauseQueue(ctx context.Context, actor string) {

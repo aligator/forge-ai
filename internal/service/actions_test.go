@@ -144,6 +144,47 @@ func TestCancelRunAsWritesAuditEventOnSuccess(t *testing.T) {
 	}
 }
 
+func TestCancelRunAsCancelsStaleStoredRun(t *testing.T) {
+	store := &recordingRunStore{}
+	runID := "run-stale"
+	store.runs = append(store.runs, runstore.Run{
+		ID:     runID,
+		Status: runstore.StatusRunning,
+	})
+	svc := New(Options{
+		Config:   config.Config{MaxConcurrent: 1},
+		RunStore: store,
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+
+	if !svc.CancelRunAs(context.Background(), runID, "alice") {
+		t.Fatal("CancelRunAs() = false, want true")
+	}
+
+	run, err := store.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("GetRun() error = %v", err)
+	}
+	if run.Status != runstore.StatusCanceled {
+		t.Fatalf("status = %q, want canceled", run.Status)
+	}
+	if run.FinishedAt.IsZero() {
+		t.Fatal("finished_at was not set")
+	}
+	if !strings.Contains(run.Error, "stale") {
+		t.Fatalf("error = %q, want stale message", run.Error)
+	}
+	if !store.hasEvent("canceled") {
+		t.Fatal("canceled event was not recorded")
+	}
+	if len(store.audit) != 1 {
+		t.Fatalf("audit events = %+v, want 1", store.audit)
+	}
+	if store.audit[0].Actor != "alice" || store.audit[0].Action != "run.cancel" || !strings.Contains(store.audit[0].DataJSON, "stale") {
+		t.Fatalf("audit event = %+v", store.audit[0])
+	}
+}
+
 func TestQueuePauseResumeWritesAuditEvents(t *testing.T) {
 	store := &recordingRunStore{}
 	svc := New(Options{
