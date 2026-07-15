@@ -34,6 +34,15 @@ func (a *spyAgent) Run(_ context.Context, _, _, _ string) (agent.Result, error) 
 	return agent.Result{}, nil
 }
 
+type capturePromptAgent struct {
+	prompt string
+}
+
+func (a *capturePromptAgent) Run(_ context.Context, _, prompt, _ string) (agent.Result, error) {
+	a.prompt = prompt
+	return agent.Result{}, nil
+}
+
 type streamingStubAgent struct {
 	result agent.Result
 	chunks []agent.OutputChunk
@@ -61,6 +70,7 @@ type recordingForgejo struct {
 	reactionContent        string
 	reactionErr            error
 	reviewComments         []string
+	reviewID               int64
 	openPullRequest        *forgejo.PullRequest
 	openPullRequests       []*forgejo.PullRequest
 	createPullRequest      forgejo.CreatePullRequestRequest
@@ -69,7 +79,8 @@ type recordingForgejo struct {
 	updatePullRequestIndex int
 }
 
-func (f *recordingForgejo) GetLatestPullReviewComments(_ context.Context, _, _ string, _ int) ([]forgejo.Comment, error) {
+func (f *recordingForgejo) GetPullReviewComments(_ context.Context, _, _ string, _ int, reviewID int64) ([]forgejo.Comment, error) {
+	f.reviewID = reviewID
 	comments := make([]forgejo.Comment, 0, len(f.reviewComments))
 	for _, body := range f.reviewComments {
 		comments = append(comments, forgejo.Comment{Body: body})

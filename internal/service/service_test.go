@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"codeberg.org/forge-ai/internal/agent"
@@ -83,6 +84,66 @@ func TestFindAgentPicksCorrectRunner(t *testing.T) {
 	}
 	if _, got := svc.handler.findAgent("@claude please fix this"); got != claudeRunner {
 		t.Fatal("expected claude runner")
+	}
+}
+
+func TestHandleReviewedWebhookFetchesTriggeredReviewComments(t *testing.T) {
+	store := &recordingRunStore{}
+	workdir := t.TempDir()
+	forge := &recordingForgejo{
+		reviewComments: []string{"@codex handle the final review feedback"},
+	}
+	agent := &capturePromptAgent{}
+	svc := New(Options{
+		Config: config.Config{
+			Agents: []config.AgentRoute{
+				{User: "codex", Mention: "@codex", Agent: config.AgentConfig{Type: "codex"}},
+			},
+			WorkspaceDir:         t.TempDir(),
+			BranchPrefix:         "forge-ai",
+			MaxConcurrent:        1,
+			ForgejoBootstrapUser: "forge-ai",
+		},
+		Forgejo:  forge,
+		Git:      &recordingGit{workdir: workdir},
+		Agents:   map[string]Agent{"@codex": agent},
+		RunStore: store,
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+
+	err := svc.Handle(context.Background(), "pull_request_comment", forgejo.WebhookPayload{
+		Action: "reviewed",
+		Repository: forgejo.Repository{
+			Name:          "demo",
+			CloneURL:      "https://forgejo.example/ac/demo.git",
+			DefaultBranch: "main",
+			Owner:         forgejo.User{Login: "ac"},
+		},
+		Pull: &forgejo.PullRequest{
+			Index:   8,
+			Title:   "Fix review flow",
+			HTMLURL: "https://forgejo.example/ac/demo/pulls/8",
+			Head: forgejo.PullRequestBranch{
+				Ref:  "review-flow",
+				Repo: forgejo.Repository{CloneURL: "https://forgejo.example/ac/demo.git"},
+			},
+			Base: forgejo.PullRequestBranch{Ref: "main"},
+		},
+		Review: &forgejo.Review{ID: 123},
+		Sender: &forgejo.User{Login: "alice"},
+	})
+	if err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+
+	if forge.reviewID != 123 {
+		t.Fatalf("reviewID = %d, want 123", forge.reviewID)
+	}
+	if !strings.Contains(agent.prompt, "Trigger comment:\n@codex handle the final review feedback") {
+		t.Fatalf("prompt missing triggered review comment:\n%s", agent.prompt)
+	}
+	if len(store.runs) != 1 || store.runs[0].Status != runstore.StatusSuccess {
+		t.Fatalf("runs = %+v, want one successful run", store.runs)
 	}
 }
 
