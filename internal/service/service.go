@@ -14,7 +14,7 @@ import (
 )
 
 type Forgejo interface {
-	GetLatestPullReviewComments(context.Context, string, string, int) ([]forgejo.Comment, error)
+	GetPullReviewComments(context.Context, string, string, int, int64) ([]forgejo.Comment, error)
 	CreateIssueComment(context.Context, string, string, int, string) error
 	CreateCommentReaction(context.Context, string, string, int64, string) error
 	FindOpenPullRequest(context.Context, string, string, string) (*forgejo.PullRequest, error)

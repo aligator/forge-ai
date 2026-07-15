@@ -39,7 +39,11 @@ func (h *webhookHandler) Handle(ctx context.Context, event string, payload forge
 	)
 
 	if ticket.Instruction == "" && event == "pull_request_comment" && payload.Action == "reviewed" {
-		comments, err := h.forgejo.GetLatestPullReviewComments(ctx, ticket.Owner, ticket.Repo, ticket.Number)
+		var reviewID int64
+		if payload.Review != nil {
+			reviewID = payload.Review.ID
+		}
+		comments, err := h.forgejo.GetPullReviewComments(ctx, ticket.Owner, ticket.Repo, ticket.Number, reviewID)
 		if err != nil {
 			h.logger.Warn("fetch review comments failed", "error", err)
 		} else {

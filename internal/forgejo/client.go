@@ -100,30 +100,19 @@ func (c *Client) CreateCommentReaction(ctx context.Context, owner, repo string, 
 	return err
 }
 
-func (c *Client) GetLatestPullReviewComments(ctx context.Context, owner, repo string, prIndex int) ([]Comment, error) {
-	body, err := c.do(ctx, http.MethodGet, apiPath("repos", owner, repo, "pulls", fmt.Sprint(prIndex), "reviews"), nil, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	var reviews []struct {
-		ID int64 `json:"id"`
-	}
-	if err := json.Unmarshal(body, &reviews); err != nil {
-		return nil, err
-	}
-
-	var latestID int64
-	for _, r := range reviews {
-		if r.ID > latestID {
-			latestID = r.ID
+func (c *Client) GetPullReviewComments(ctx context.Context, owner, repo string, prIndex int, reviewID int64) ([]Comment, error) {
+	if reviewID == 0 {
+		latestID, err := c.getLatestPullReviewID(ctx, owner, repo, prIndex)
+		if err != nil {
+			return nil, err
 		}
+		reviewID = latestID
 	}
-	if latestID == 0 {
+	if reviewID == 0 {
 		return nil, nil
 	}
 
-	body, err = c.do(ctx, http.MethodGet, apiPath("repos", owner, repo, "pulls", fmt.Sprint(prIndex), "reviews", fmt.Sprint(latestID), "comments"), nil, nil)
+	body, err := c.do(ctx, http.MethodGet, apiPath("repos", owner, repo, "pulls", fmt.Sprint(prIndex), "reviews", fmt.Sprint(reviewID), "comments"), nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -140,6 +129,28 @@ func (c *Client) GetLatestPullReviewComments(ctx context.Context, owner, repo st
 		}
 	}
 	return result, nil
+}
+
+func (c *Client) getLatestPullReviewID(ctx context.Context, owner, repo string, prIndex int) (int64, error) {
+	body, err := c.do(ctx, http.MethodGet, apiPath("repos", owner, repo, "pulls", fmt.Sprint(prIndex), "reviews"), nil, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	var reviews []struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(body, &reviews); err != nil {
+		return 0, err
+	}
+
+	var latestID int64
+	for _, r := range reviews {
+		if r.ID > latestID {
+			latestID = r.ID
+		}
+	}
+	return latestID, nil
 }
 
 func (c *Client) FindOpenPullRequest(ctx context.Context, owner, repo, head string) (*PullRequest, error) {
