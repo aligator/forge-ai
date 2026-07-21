@@ -1,4 +1,4 @@
-FROM codeberg.org/forgejo/forgejo:15
+FROM codeberg.org/forgejo/forgejo:16
 USER root
 RUN apk add --no-cache curl jq su-exec
 COPY forgejo-dev.sh /usr/local/bin/forgejo-dev

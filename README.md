@@ -40,7 +40,7 @@ go run .
 
 `docker compose --profile host up` starts a host-dev Forgejo instance, creates an admin user, creates `forge-ai/demo`, creates one demo issue, and installs a webhook that points back to `go run .` on your host via `http://host.docker.internal:8080/webhook`. `go run .` starts `forge-ai` locally and creates its own dev token from the bootstrap login.
 
-The dev Compose setup uses the normal Forgejo image, pinned to `codeberg.org/forgejo/forgejo:15`.
+The dev Compose setup uses the normal Forgejo image, pinned to `codeberg.org/forgejo/forgejo:16`.
 
 Login:
 
