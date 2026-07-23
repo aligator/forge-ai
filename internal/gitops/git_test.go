@@ -176,6 +176,70 @@ func TestPushAllowsNewRemoteBranch(t *testing.T) {
 	}
 }
 
+func TestPushPreservesCommittedWorkWhenRemoteMergeConflicts(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	remote := root + "/remote.git"
+	seed := root + "/seed"
+	workdir := root + "/work"
+	cloneURL := "file://" + remote
+
+	runTestGit(t, ctx, "", "init", "--bare", remote)
+	runTestGit(t, ctx, "", "init", seed)
+	configureTestGitUser(t, ctx, seed)
+	runTestGit(t, ctx, seed, "checkout", "-b", "main")
+	writeTestFile(t, seed+"/README.md", "base\n")
+	runTestGit(t, ctx, seed, "add", "README.md")
+	runTestGit(t, ctx, seed, "commit", "-m", "base")
+	runTestGit(t, ctx, seed, "remote", "add", "origin", cloneURL)
+	runTestGit(t, ctx, seed, "push", "-u", "origin", "main")
+
+	runTestGit(t, ctx, seed, "checkout", "-b", "feature")
+	writeTestFile(t, seed+"/README.md", "remote v1\n")
+	runTestGit(t, ctx, seed, "commit", "-am", "remote v1")
+	runTestGit(t, ctx, seed, "push", "-u", "origin", "feature")
+
+	runTestGit(t, ctx, "", "clone", cloneURL, workdir)
+	configureTestGitUser(t, ctx, workdir)
+	runTestGit(t, ctx, workdir, "checkout", "feature")
+	writeTestFile(t, workdir+"/README.md", "agent work\n")
+	runTestGit(t, ctx, workdir, "commit", "-am", "agent work")
+
+	writeTestFile(t, seed+"/README.md", "remote v2\n")
+	runTestGit(t, ctx, seed, "commit", "-am", "remote v2")
+	runTestGit(t, ctx, seed, "push", "origin", "feature")
+
+	git := New(config.GitConfig{RemoteName: "origin"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	err := git.Push(ctx, workdir, "feature")
+	if err == nil {
+		t.Fatal("Push() error = nil, want conflict error")
+	}
+	if !strings.Contains(err.Error(), "committed work preserved on feature-forge-ai-recovery-") {
+		t.Fatalf("Push() error = %v, want recovery branch message", err)
+	}
+	status := runTestGit(t, ctx, workdir, "status", "--porcelain")
+	if status != "" {
+		t.Fatalf("status = %q, want clean after merge abort", status)
+	}
+
+	out := runTestGit(t, ctx, seed, "ls-remote", "--heads", "origin")
+	recoveryBranch := ""
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "refs/heads/feature-forge-ai-recovery-") {
+			recoveryBranch = strings.TrimPrefix(line[strings.LastIndex(line, "refs/heads/"):], "refs/heads/")
+			break
+		}
+	}
+	if recoveryBranch == "" {
+		t.Fatalf("ls-remote output missing recovery branch:\n%s", out)
+	}
+	runTestGit(t, ctx, seed, "fetch", "origin", recoveryBranch)
+	got := runTestGit(t, ctx, seed, "show", "origin/"+recoveryBranch+":README.md")
+	if got != "agent work\n" {
+		t.Fatalf("recovery README = %q, want agent work", got)
+	}
+}
+
 func runTestGit(t *testing.T, ctx context.Context, dir, name string, args ...string) string {
 	t.Helper()
 	out, err := run(ctx, dir, "git", append([]string{name}, args...)...)
