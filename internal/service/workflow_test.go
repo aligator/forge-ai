@@ -3,12 +3,15 @@ package service
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 
 	"codeberg.org/forge-ai/internal/agent"
 	"codeberg.org/forge-ai/internal/config"
 	"codeberg.org/forge-ai/internal/forgejo"
+	"codeberg.org/forge-ai/internal/runstore"
 )
 
 func TestBranchForPullRequestUsesHeadBranch(t *testing.T) {
@@ -99,6 +102,62 @@ func TestRunAgentPersistsStreamingLogChunks(t *testing.T) {
 	}
 	if len(store.runs) > 0 && store.runs[0].SessionID != "session-123" {
 		t.Fatalf("stored session = %q, want session-123", store.runs[0].SessionID)
+	}
+}
+
+func TestRunPreservesChangesWhenAgentFails(t *testing.T) {
+	store := &recordingRunStore{
+		runs: []runstore.Run{{ID: "run-1"}},
+	}
+	git := &recordingGit{workdir: t.TempDir()}
+	forge := &recordingForgejo{}
+	runner := &workflowRunner{
+		cfg:      config.Config{WorkspaceDir: t.TempDir(), BranchPrefix: "forge-ai"},
+		git:      git,
+		runStore: store,
+		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	ticket := forgejo.Ticket{
+		Owner:         "ac",
+		Repo:          "demo",
+		Kind:          "issue",
+		Number:        42,
+		Title:         "aborted",
+		CloneURL:      "https://forgejo.example/ac/demo.git",
+		DefaultBranch: "main",
+	}
+	run := runstore.Run{
+		ID:           "run-1",
+		Branch:       "forge-ai/ac/demo/issue-42",
+		BaseBranch:   "main",
+		AgentMention: "@codex",
+	}
+
+	err := runner.run(context.Background(), forge, ticket, &stubAgent{
+		result: agent.Result{Output: "partial work", SessionID: "session-42"},
+		err:    errors.New("agent timed out"),
+	}, run, config.GitIdentity{})
+	if err == nil || !strings.Contains(err.Error(), "agent failed") {
+		t.Fatalf("run() error = %v, want agent failed", err)
+	}
+	if git.commitCalls != 1 || git.pushCalls != 1 {
+		t.Fatalf("git calls commit=%d push=%d, want 1/1", git.commitCalls, git.pushCalls)
+	}
+	if git.pushBranch != "forge-ai/ac/demo/issue-42" {
+		t.Fatalf("push branch = %q, want issue branch", git.pushBranch)
+	}
+	if git.commitMessage != "forge-ai: work on issue #42" {
+		t.Fatalf("commit message = %q", git.commitMessage)
+	}
+	storedRun, _ := store.GetRun(context.Background(), "run-1")
+	if storedRun.Status != runstore.StatusFailed {
+		t.Fatalf("run status = %q, want failed", storedRun.Status)
+	}
+	if !store.hasEvent("commit_checked") || !store.hasEvent("pushed") || !store.hasEvent("abort_preserved") {
+		t.Fatalf("events = %+v", store.events)
+	}
+	if !strings.Contains(forge.commentBody, "partial work") || !strings.Contains(forge.commentBody, "Changes were committed if needed and pushed") {
+		t.Fatalf("commentBody = %q, want output and preserved branch note", forge.commentBody)
 	}
 }
 

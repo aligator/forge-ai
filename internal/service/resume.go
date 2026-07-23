@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"codeberg.org/forge-ai/internal/config"
+	"codeberg.org/forge-ai/internal/forgejo"
 	"codeberg.org/forge-ai/internal/gitops"
 	"codeberg.org/forge-ai/internal/runstore"
 	appruntime "codeberg.org/forge-ai/internal/runtime"
@@ -123,6 +124,17 @@ func (r *workflowRunner) resume(ctx context.Context, ag Agent, parentRun, run ru
 
 	_, agentErr := r.runAgent(ctx, ag, workdir, in.Prompt, sessionID, run.ID)
 	if agentErr != nil {
+		if in.WorkspaceMode != WorkspaceModeManualContextOnly {
+			if preserveErr := r.commitAndPushAfterAbort(&workflowState{
+				ticket:  forgejoTicketFromRun(parentRun),
+				run:     run,
+				branch:  parentRun.Branch,
+				base:    parentRun.BaseBranch,
+				workdir: workdir,
+			}); preserveErr != nil {
+				agentErr = fmt.Errorf("%w; preserve aborted changes: %v", agentErr, preserveErr)
+			}
+		}
 		if ctx.Err() != nil {
 			r.finishRun(context.Background(), run.ID, runstore.StatusCanceled, agentErr)
 			return agentErr
@@ -135,6 +147,15 @@ func (r *workflowRunner) resume(ctx context.Context, ag Agent, parentRun, run ru
 	r.addRunEvent(ctx, run.ID, "agent_finished", "agent completed")
 	r.finishRun(ctx, run.ID, runstore.StatusSuccess, nil)
 	return nil
+}
+
+func forgejoTicketFromRun(run runstore.Run) forgejo.Ticket {
+	return forgejo.Ticket{
+		Owner:  run.Owner,
+		Repo:   run.Repo,
+		Kind:   run.TicketKind,
+		Number: run.TicketNumber,
+	}
 }
 
 func (r *workflowRunner) prepareResumeWorkspace(ctx context.Context, parentRun runstore.Run, in manualResumeInput, identity config.GitIdentity) (string, func(), error) {
