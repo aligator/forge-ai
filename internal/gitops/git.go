@@ -166,7 +166,34 @@ func (g *Git) CommitIfDirty(ctx context.Context, workdir, message string) (bool,
 
 func (g *Git) Push(ctx context.Context, workdir, branch string) error {
 	branch = BranchRefName(branch)
-	_, err := run(ctx, workdir, "git", "push", "-u", g.cfg.RemoteName, branch)
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := g.mergeRemoteBranch(ctx, workdir, branch); err != nil {
+			return err
+		}
+		_, err := run(ctx, workdir, "git", "push", "-u", g.cfg.RemoteName, branch)
+		if err == nil {
+			return nil
+		}
+		if attempt == 1 {
+			return err
+		}
+	}
+	return nil
+}
+
+func (g *Git) mergeRemoteBranch(ctx context.Context, workdir, branch string) error {
+	branch = BranchRefName(branch)
+	if !g.RemoteBranchExists(ctx, workdir, branch) {
+		return nil
+	}
+	if _, err := run(ctx, workdir, "git", "fetch", g.cfg.RemoteName, branch); err != nil {
+		return err
+	}
+	remoteRef := g.cfg.RemoteName + "/" + branch
+	if _, err := run(ctx, workdir, "git", "merge-base", "--is-ancestor", remoteRef, "HEAD"); err == nil {
+		return nil
+	}
+	_, err := run(ctx, workdir, "git", "merge", "--no-edit", remoteRef)
 	return err
 }
 

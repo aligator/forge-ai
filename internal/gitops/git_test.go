@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 
 	"codeberg.org/forge-ai/internal/config"
@@ -89,6 +90,92 @@ func TestPrepareForceSyncsExistingRemoteBranch(t *testing.T) {
 	}
 }
 
+func TestPushMergesRemoteBranchBeforePush(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	remote := root + "/remote.git"
+	seed := root + "/seed"
+	workdir := root + "/work"
+	cloneURL := "file://" + remote
+
+	runTestGit(t, ctx, "", "init", "--bare", remote)
+	runTestGit(t, ctx, "", "init", seed)
+	configureTestGitUser(t, ctx, seed)
+	runTestGit(t, ctx, seed, "checkout", "-b", "main")
+	writeTestFile(t, seed+"/README.md", "base\n")
+	runTestGit(t, ctx, seed, "add", "README.md")
+	runTestGit(t, ctx, seed, "commit", "-m", "base")
+	runTestGit(t, ctx, seed, "remote", "add", "origin", cloneURL)
+	runTestGit(t, ctx, seed, "push", "-u", "origin", "main")
+
+	runTestGit(t, ctx, "", "clone", cloneURL, workdir)
+	configureTestGitUser(t, ctx, workdir)
+	runTestGit(t, ctx, workdir, "checkout", "-b", "feature", "origin/main")
+	writeTestFile(t, workdir+"/agent.txt", "agent\n")
+	runTestGit(t, ctx, workdir, "add", "agent.txt")
+	runTestGit(t, ctx, workdir, "commit", "-m", "agent work")
+
+	runTestGit(t, ctx, seed, "checkout", "-b", "feature")
+	writeTestFile(t, seed+"/remote.txt", "remote\n")
+	runTestGit(t, ctx, seed, "add", "remote.txt")
+	runTestGit(t, ctx, seed, "commit", "-m", "remote work")
+	runTestGit(t, ctx, seed, "push", "-u", "origin", "feature")
+
+	git := New(config.GitConfig{RemoteName: "origin"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err := git.Push(ctx, workdir, "feature"); err != nil {
+		t.Fatalf("Push() error = %v", err)
+	}
+	out := runTestGit(t, ctx, workdir, "log", "--oneline", "--merges", "-1")
+	if !strings.Contains(out, "Merge remote-tracking branch 'origin/feature'") {
+		t.Fatalf("merge log = %q, want remote feature merge", out)
+	}
+	runTestGit(t, ctx, seed, "fetch", "origin", "feature")
+	remoteAgent := runTestGit(t, ctx, seed, "show", "origin/feature:agent.txt")
+	if remoteAgent != "agent\n" {
+		t.Fatalf("remote agent.txt = %q, want agent", remoteAgent)
+	}
+	remoteFile := runTestGit(t, ctx, seed, "show", "origin/feature:remote.txt")
+	if remoteFile != "remote\n" {
+		t.Fatalf("remote remote.txt = %q, want remote", remoteFile)
+	}
+}
+
+func TestPushAllowsNewRemoteBranch(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	remote := root + "/remote.git"
+	seed := root + "/seed"
+	workdir := root + "/work"
+	cloneURL := "file://" + remote
+
+	runTestGit(t, ctx, "", "init", "--bare", remote)
+	runTestGit(t, ctx, "", "init", seed)
+	configureTestGitUser(t, ctx, seed)
+	runTestGit(t, ctx, seed, "checkout", "-b", "main")
+	writeTestFile(t, seed+"/README.md", "base\n")
+	runTestGit(t, ctx, seed, "add", "README.md")
+	runTestGit(t, ctx, seed, "commit", "-m", "base")
+	runTestGit(t, ctx, seed, "remote", "add", "origin", cloneURL)
+	runTestGit(t, ctx, seed, "push", "-u", "origin", "main")
+
+	runTestGit(t, ctx, "", "clone", cloneURL, workdir)
+	configureTestGitUser(t, ctx, workdir)
+	runTestGit(t, ctx, workdir, "checkout", "-b", "feature", "origin/main")
+	writeTestFile(t, workdir+"/agent.txt", "agent\n")
+	runTestGit(t, ctx, workdir, "add", "agent.txt")
+	runTestGit(t, ctx, workdir, "commit", "-m", "agent work")
+
+	git := New(config.GitConfig{RemoteName: "origin"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err := git.Push(ctx, workdir, "feature"); err != nil {
+		t.Fatalf("Push() error = %v", err)
+	}
+	runTestGit(t, ctx, seed, "fetch", "origin", "feature")
+	remoteAgent := runTestGit(t, ctx, seed, "show", "origin/feature:agent.txt")
+	if remoteAgent != "agent\n" {
+		t.Fatalf("remote agent.txt = %q, want agent", remoteAgent)
+	}
+}
+
 func runTestGit(t *testing.T, ctx context.Context, dir, name string, args ...string) string {
 	t.Helper()
 	out, err := run(ctx, dir, "git", append([]string{name}, args...)...)
@@ -96,6 +183,12 @@ func runTestGit(t *testing.T, ctx context.Context, dir, name string, args ...str
 		t.Fatalf("git %s %v: %v", name, args, err)
 	}
 	return out
+}
+
+func configureTestGitUser(t *testing.T, ctx context.Context, dir string) {
+	t.Helper()
+	runTestGit(t, ctx, dir, "config", "user.name", "Test User")
+	runTestGit(t, ctx, dir, "config", "user.email", "test@example.invalid")
 }
 
 func writeTestFile(t *testing.T, path, contents string) {
