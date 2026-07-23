@@ -408,6 +408,7 @@ func TestManualResumeCancellation(t *testing.T) {
 	started := make(chan struct{})
 	done := make(chan struct{})
 	ag := &blockingAgent{started: started, done: done}
+	git := &recordingGit{workdir: workdir}
 
 	svc := New(Options{
 		Config: config.Config{
@@ -418,7 +419,7 @@ func TestManualResumeCancellation(t *testing.T) {
 			MaxConcurrent:        1,
 			ForgejoBootstrapUser: "forge-ai",
 		},
-		Git:      &recordingGit{workdir: workdir},
+		Git:      git,
 		Agents:   map[string]Agent{"@codex": ag},
 		RunStore: store,
 		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -455,6 +456,9 @@ func TestManualResumeCancellation(t *testing.T) {
 			t.Fatalf("timed out waiting for canceled status")
 		case <-time.After(10 * time.Millisecond):
 		}
+	}
+	if git.commitCalls != 1 || git.pushCalls != 1 {
+		t.Fatalf("git calls commit=%d push=%d, want 1/1", git.commitCalls, git.pushCalls)
 	}
 }
 

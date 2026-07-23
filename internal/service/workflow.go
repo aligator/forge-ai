@@ -35,6 +35,7 @@ type workflowState struct {
 	workdir   string
 	result    agent.Result
 	committed bool
+	pushed    bool
 }
 
 func (r *workflowRunner) run(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, ag Agent, run runstore.Run, identity config.GitIdentity) error {
@@ -51,7 +52,7 @@ func (r *workflowRunner) run(ctx context.Context, fc Forgejo, ticket forgejo.Tic
 	}
 	defer r.removeWorkspace(state.workdir)
 	if err := r.executeAgent(ctx, fc, ag, &state); err != nil {
-		return err
+		return r.abortWorkflow(ctx, fc, &state, err)
 	}
 	if err := r.commitAndPush(ctx, fc, &state); err != nil {
 		return err
@@ -98,15 +99,25 @@ func (r *workflowRunner) executeAgent(ctx context.Context, fc Forgejo, ag Agent,
 	r.logWorkspaceFiles(state.workdir, "after agent run")
 	if err != nil {
 		if ctx.Err() != nil {
-			r.finishRun(context.Background(), state.run.ID, runstore.StatusCanceled, err)
 			return err
 		}
-		err = fmt.Errorf("agent failed: %w", err)
-		r.failWorkflow(ctx, fc, *state, err)
-		return err
+		return fmt.Errorf("agent failed: %w", err)
 	}
 	r.addRunEvent(ctx, state.run.ID, "agent_finished", "agent completed")
 	return nil
+}
+
+func (r *workflowRunner) abortWorkflow(ctx context.Context, fc Forgejo, state *workflowState, err error) error {
+	preserveErr := r.commitAndPushAfterAbort(state)
+	if preserveErr != nil {
+		err = fmt.Errorf("%w; preserve aborted changes: %v", err, preserveErr)
+	}
+	if ctx.Err() != nil {
+		r.finishRun(context.Background(), state.run.ID, runstore.StatusCanceled, err)
+		return err
+	}
+	r.failWorkflow(ctx, fc, *state, err)
+	return err
 }
 
 func (r *workflowRunner) agentPromptDefaults(mention string) (bool, string) {
@@ -128,30 +139,45 @@ func (r *workflowRunner) agentPromptDefaults(mention string) (bool, string) {
 }
 
 func (r *workflowRunner) commitAndPush(ctx context.Context, fc Forgejo, state *workflowState) error {
+	if err := r.commitAndPushChanges(ctx, state); err != nil {
+		if ctx.Err() != nil {
+			r.finishRun(context.Background(), state.run.ID, runstore.StatusCanceled, err)
+			return err
+		}
+		r.failWorkflow(ctx, fc, *state, err)
+		return err
+	}
+	return nil
+}
+
+func (r *workflowRunner) commitAndPushAfterAbort(state *workflowState) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	if err := r.commitAndPushChanges(ctx, state); err != nil {
+		r.addRunEvent(context.Background(), state.run.ID, "abort_preserve_failed", err.Error())
+		return err
+	}
+	r.addRunEvent(context.Background(), state.run.ID, "abort_preserved", fmt.Sprintf("committed=%t", state.committed))
+	return nil
+}
+
+func (r *workflowRunner) commitAndPushChanges(ctx context.Context, state *workflowState) error {
 	commitMsg := readAndRemoveCommitMsg(state.workdir)
 	if commitMsg == "" {
 		commitMsg = fmt.Sprintf("forge-ai: work on %s #%d", state.ticket.Kind, state.ticket.Number)
 	}
 	committed, err := r.git.CommitIfDirty(ctx, state.workdir, commitMsg)
 	if err != nil {
-		if ctx.Err() != nil {
-			r.finishRun(context.Background(), state.run.ID, runstore.StatusCanceled, err)
-			return err
-		}
-		r.failWorkflow(ctx, fc, *state, err)
 		return err
 	}
 	state.committed = committed
 	r.addRunEvent(ctx, state.run.ID, "commit_checked", fmt.Sprintf("committed=%t", committed))
 
 	if err := r.git.Push(ctx, state.workdir, state.branch); err != nil {
-		if ctx.Err() != nil {
-			r.finishRun(context.Background(), state.run.ID, runstore.StatusCanceled, err)
-			return err
-		}
-		r.failWorkflow(ctx, fc, *state, err)
 		return err
 	}
+	state.pushed = true
 	r.addRunEvent(ctx, state.run.ID, "pushed", "branch pushed")
 	return nil
 }
@@ -185,11 +211,27 @@ func (r *workflowRunner) finishWorkflow(ctx context.Context, fc Forgejo, state w
 
 func (r *workflowRunner) failWorkflow(ctx context.Context, fc Forgejo, state workflowState, err error) {
 	r.finishRun(ctx, state.run.ID, runstore.StatusFailed, err)
+	output := state.result.Output
+	if state.pushed {
+		output = appendPreservedBranchOutput(output, state.branch)
+	}
 	if state.result.Output != "" || state.result.SessionID != "" {
-		_ = postFailureWithOutput(ctx, fc, state.ticket, err, state.result.Output, state.result.SessionID)
+		_ = postFailureWithOutput(ctx, fc, state.ticket, err, output, state.result.SessionID)
+		return
+	}
+	if output != "" {
+		_ = postFailureWithOutput(ctx, fc, state.ticket, err, output, "")
 		return
 	}
 	_ = postFailure(ctx, fc, state.ticket, err)
+}
+
+func appendPreservedBranchOutput(output, branch string) string {
+	message := "Changes were committed if needed and pushed to `" + branch + "` before marking this run failed."
+	if strings.TrimSpace(output) == "" {
+		return message
+	}
+	return strings.TrimSpace(output) + "\n\n" + message
 }
 
 func (r *workflowRunner) createRun(ctx context.Context, payload forgejo.WebhookPayload, ticket forgejo.Ticket, mention, branch, base string) (runstore.Run, error) {

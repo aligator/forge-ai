@@ -123,8 +123,12 @@ func (f *recordingForgejo) UpdatePullRequest(_ context.Context, _ string, _ stri
 }
 
 type recordingGit struct {
-	workdir  string
-	identity config.GitIdentity
+	workdir       string
+	identity      config.GitIdentity
+	commitCalls   int
+	commitMessage string
+	pushCalls     int
+	pushBranch    string
 }
 
 func (g *recordingGit) Prepare(_ context.Context, _, _, _, _, _, _, _ string, identity config.GitIdentity) (string, error) {
@@ -132,11 +136,15 @@ func (g *recordingGit) Prepare(_ context.Context, _, _, _, _, _, _, _ string, id
 	return g.workdir, nil
 }
 
-func (g *recordingGit) CommitIfDirty(context.Context, string, string) (bool, error) {
+func (g *recordingGit) CommitIfDirty(_ context.Context, _, message string) (bool, error) {
+	g.commitCalls++
+	g.commitMessage = message
 	return true, nil
 }
 
-func (g *recordingGit) Push(context.Context, string, string) error {
+func (g *recordingGit) Push(_ context.Context, _, branch string) error {
+	g.pushCalls++
+	g.pushBranch = branch
 	return nil
 }
 
