@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -188,6 +189,14 @@ func (s *Service) PauseQueue(ctx context.Context, actor string) {
 func (s *Service) ResumeQueue(ctx context.Context, actor string) {
 	s.runtime.Resume()
 	s.audit(ctx, actor, "queue.resume", "queue", "default", "")
+}
+
+func (s *Service) SetMaxConcurrent(ctx context.Context, maxConcurrent int, actor string) error {
+	if err := s.runtime.SetMaxConcurrent(maxConcurrent); err != nil {
+		return err
+	}
+	s.audit(ctx, actor, "queue.set_max_concurrent", "queue", "default", fmt.Sprintf(`{"max_concurrent":%d}`, maxConcurrent))
+	return nil
 }
 
 func (s *Service) audit(ctx context.Context, actor, action, targetType, targetID, dataJSON string) {

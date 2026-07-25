@@ -132,6 +132,17 @@ func (r *Runtime) SubmitWebhookRun(ctx context.Context, spec RunSpec, fn func(co
 	return nil
 }
 
+func (r *Runtime) SetMaxConcurrent(maxConcurrent int) error {
+	if maxConcurrent <= 0 {
+		return fmt.Errorf("max concurrent must be positive, got %d", maxConcurrent)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.maxConcurrent = maxConcurrent
+	r.cond.Broadcast()
+	return nil
+}
+
 func (r *Runtime) Pause() {
 	r.mu.Lock()
 	defer r.mu.Unlock()

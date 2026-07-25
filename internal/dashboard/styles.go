@@ -110,7 +110,16 @@ p { margin: 4px 0 0; color: var(--muted); }
 .button:hover, .filter:hover { border-color: var(--accent); color: var(--accent); }
 .button--danger { border-color: #d8989b; color: var(--danger); }
 .button--small { min-height: 30px; padding: 4px 9px; }
-.inline-form { display: inline-flex; margin: 0; }
+.inline-form { display: inline-flex; gap: 6px; margin: 0; }
+.inline-form__input--number {
+	width: 56px;
+	min-height: 30px;
+	padding: 4px 8px;
+	border: 1px solid var(--line-strong);
+	border-radius: 6px;
+	background: var(--panel);
+	font-size: 13px;
+}
 .filterbar { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 .health-row {
 	display: grid;
