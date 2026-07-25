@@ -24,15 +24,15 @@ func TestShouldRunOnlyForMention(t *testing.T) {
 		},
 	})
 
-	if !svc.handler.shouldRun(forgejo.WebhookPayload{Sender: &forgejo.User{Login: "forge-user"}}, forgejo.Ticket{Instruction: "@forge-ai say hello"}) {
+	if !svc.handler.shouldRun(context.Background(), forgejo.WebhookPayload{Sender: &forgejo.User{Login: "forge-user"}}, forgejo.Ticket{Instruction: "@forge-ai say hello"}) {
 		t.Fatal("expected mention to trigger")
 	}
 
-	if svc.handler.shouldRun(forgejo.WebhookPayload{Sender: &forgejo.User{Login: "forge-user"}}, forgejo.Ticket{Labels: []forgejo.Label{{Name: "ai"}}}) {
+	if svc.handler.shouldRun(context.Background(), forgejo.WebhookPayload{Sender: &forgejo.User{Login: "forge-user"}}, forgejo.Ticket{Labels: []forgejo.Label{{Name: "ai"}}}) {
 		t.Fatal("expected label alone not to trigger")
 	}
 
-	if svc.handler.shouldRun(forgejo.WebhookPayload{Sender: &forgejo.User{Login: "forge-ai"}}, forgejo.Ticket{Instruction: "@forge-ai done"}) {
+	if svc.handler.shouldRun(context.Background(), forgejo.WebhookPayload{Sender: &forgejo.User{Login: "forge-ai"}}, forgejo.Ticket{Instruction: "@forge-ai done"}) {
 		t.Fatal("expected bot mention not to trigger")
 	}
 }
@@ -51,13 +51,38 @@ func TestShouldRunForAnyConfiguredMention(t *testing.T) {
 	})
 
 	for _, mention := range []string{"@codex", "@claude", "@opencode"} {
-		if !svc.handler.shouldRun(forgejo.WebhookPayload{Sender: &forgejo.User{Login: "user"}}, forgejo.Ticket{Instruction: mention + " do something"}) {
+		if !svc.handler.shouldRun(context.Background(), forgejo.WebhookPayload{Sender: &forgejo.User{Login: "user"}}, forgejo.Ticket{Instruction: mention + " do something"}) {
 			t.Fatalf("expected %q to trigger", mention)
 		}
 	}
 
-	if svc.handler.shouldRun(forgejo.WebhookPayload{Sender: &forgejo.User{Login: "user"}}, forgejo.Ticket{Instruction: "@other do something"}) {
+	if svc.handler.shouldRun(context.Background(), forgejo.WebhookPayload{Sender: &forgejo.User{Login: "user"}}, forgejo.Ticket{Instruction: "@other do something"}) {
 		t.Fatal("expected unknown mention not to trigger")
+	}
+}
+
+func TestShouldRunUsesStoredAgentEnabledSetting(t *testing.T) {
+	store := &recordingRunStore{
+		settings: map[string]runstore.AgentSettings{
+			"@codex": {
+				Mention: "@codex",
+				Enabled: false,
+			},
+		},
+	}
+	svc := New(Options{
+		Config: config.Config{
+			Agents: []config.AgentRoute{
+				{User: "codex", Mention: "@codex"},
+			},
+			ForgejoBootstrapUser: "forge-ai",
+			MaxConcurrent:        1,
+		},
+		RunStore: store,
+	})
+
+	if svc.handler.shouldRun(context.Background(), forgejo.WebhookPayload{Sender: &forgejo.User{Login: "user"}}, forgejo.Ticket{Instruction: "@codex do something"}) {
+		t.Fatal("expected stored disabled setting to prevent trigger")
 	}
 }
 
@@ -79,10 +104,10 @@ func TestFindAgentPicksCorrectRunner(t *testing.T) {
 		},
 	})
 
-	if _, got := svc.handler.findAgent("@codex please fix this"); got != codexRunner {
+	if _, got := svc.handler.findAgent(context.Background(), "@codex please fix this"); got != codexRunner {
 		t.Fatal("expected codex runner")
 	}
-	if _, got := svc.handler.findAgent("@claude please fix this"); got != claudeRunner {
+	if _, got := svc.handler.findAgent(context.Background(), "@claude please fix this"); got != claudeRunner {
 		t.Fatal("expected claude runner")
 	}
 }

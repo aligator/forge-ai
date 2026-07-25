@@ -100,6 +100,22 @@ func TestOutputCollectorKeepsLimitedTail(t *testing.T) {
 	}
 }
 
+func TestArgsWithModelAddsConfiguredModel(t *testing.T) {
+	got := argsWithModel([]string{"exec"}, "gpt-test")
+	want := []string{"exec", "--model", "gpt-test"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("argsWithModel() = %#v, want %#v", got, want)
+	}
+}
+
+func TestArgsWithModelKeepsExplicitModelArg(t *testing.T) {
+	got := argsWithModel([]string{"exec", "--model", "gpt-old"}, "gpt-new")
+	want := []string{"exec", "--model", "gpt-old"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("argsWithModel() = %#v, want %#v", got, want)
+	}
+}
+
 func TestBroadcasterDeliversChunksToSubscribers(t *testing.T) {
 	broadcaster := NewBroadcaster()
 	ch, unsubscribe := broadcaster.Subscribe(1)

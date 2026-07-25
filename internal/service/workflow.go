@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -134,6 +135,18 @@ func (r *workflowRunner) agentPromptDefaults(mention string) (bool, string) {
 			toolHints = route.Agent.ToolHints
 		}
 		break
+	}
+	if store, ok := r.runStore.(agentSettingsGetter); ok {
+		settings, err := store.GetAgentSettings(context.Background(), mention)
+		switch {
+		case err == nil:
+			if settings.AllowGitSet {
+				allowGit = settings.AllowGit
+			}
+			toolHints = settings.ToolHints
+		case !errors.Is(err, runstore.ErrAgentSettingsNotFound) && r.logger != nil:
+			r.logger.Warn("load agent prompt settings failed", "mention", mention, "error", err)
+		}
 	}
 	return allowGit, toolHints
 }

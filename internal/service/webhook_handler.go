@@ -49,7 +49,7 @@ func (h *webhookHandler) Handle(ctx context.Context, event string, payload forge
 		} else {
 			h.logger.Debug("fetched review comments", "count", len(comments))
 			for _, c := range comments {
-				if h.anyMentionIn(c.Body) && ticket.CommentID == 0 {
+				if h.anyMentionIn(ctx, c.Body) && ticket.CommentID == 0 {
 					ticket.CommentID = c.ID
 				}
 				if ticket.Instruction == "" {
@@ -66,7 +66,7 @@ func (h *webhookHandler) Handle(ctx context.Context, event string, payload forge
 		return nil
 	}
 
-	if !h.shouldRun(payload, ticket) {
+	if !h.shouldRun(ctx, payload, ticket) {
 		sender := ""
 		if payload.Sender != nil {
 			sender = payload.Sender.Handle()
@@ -87,7 +87,7 @@ func (h *webhookHandler) Handle(ctx context.Context, event string, payload forge
 		return nil
 	}
 
-	mention, ag := h.findAgent(ticket.Instruction)
+	mention, ag := h.findAgent(ctx, ticket.Instruction)
 	fc := h.forgejoFor(mention)
 	route := h.routeForMention(mention)
 	branch := branchForTicket(h.cfg, ticket)
@@ -158,10 +158,10 @@ func (h *webhookHandler) forgejoFor(mention string) Forgejo {
 	return h.forgejo
 }
 
-func (h *webhookHandler) shouldRun(payload forgejo.WebhookPayload, ticket forgejo.Ticket) bool {
+func (h *webhookHandler) shouldRun(ctx context.Context, payload forgejo.WebhookPayload, ticket forgejo.Ticket) bool {
 	lower := strings.ToLower(ticket.Instruction)
 	for _, route := range h.cfg.Agents {
-		if route.Disabled {
+		if !h.agentEnabled(ctx, route) {
 			continue
 		}
 		if !strings.Contains(lower, strings.ToLower(route.Mention)) {
@@ -182,10 +182,10 @@ func (h *webhookHandler) shouldRun(payload forgejo.WebhookPayload, ticket forgej
 	return false
 }
 
-func (h *webhookHandler) anyMentionIn(text string) bool {
+func (h *webhookHandler) anyMentionIn(ctx context.Context, text string) bool {
 	lower := strings.ToLower(text)
 	for _, route := range h.cfg.Agents {
-		if route.Disabled {
+		if !h.agentEnabled(ctx, route) {
 			continue
 		}
 		if strings.Contains(lower, strings.ToLower(route.Mention)) {
@@ -197,10 +197,10 @@ func (h *webhookHandler) anyMentionIn(text string) bool {
 
 // findAgent returns the matched mention and runner for the first mention found in instruction.
 // Assumes shouldRun already confirmed a match exists.
-func (h *webhookHandler) findAgent(instruction string) (string, Agent) {
+func (h *webhookHandler) findAgent(ctx context.Context, instruction string) (string, Agent) {
 	lower := strings.ToLower(instruction)
 	for _, route := range h.cfg.Agents {
-		if route.Disabled {
+		if !h.agentEnabled(ctx, route) {
 			continue
 		}
 		if strings.Contains(lower, strings.ToLower(route.Mention)) {
@@ -211,6 +211,21 @@ func (h *webhookHandler) findAgent(instruction string) (string, Agent) {
 		}
 	}
 	return "", nil
+}
+
+func (h *webhookHandler) agentEnabled(ctx context.Context, route config.AgentRoute) bool {
+	if h.runner != nil && h.runner.runStore != nil {
+		if store, ok := h.runner.runStore.(agentSettingsGetter); ok {
+			settings, err := store.GetAgentSettings(ctx, route.Mention)
+			switch {
+			case err == nil:
+				return settings.Enabled
+			case !errors.Is(err, runstore.ErrAgentSettingsNotFound) && h.logger != nil:
+				h.logger.Warn("load agent enabled setting failed", "mention", route.Mention, "error", err)
+			}
+		}
+	}
+	return !route.Disabled
 }
 
 func (h *webhookHandler) routeForMention(mention string) config.AgentRoute {
