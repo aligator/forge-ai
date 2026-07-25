@@ -118,4 +118,22 @@ func TestNewRegistersDashboardWithoutDisturbingExistingRoutes(t *testing.T) {
 	if !strings.Contains(body, "Operations") || !strings.Contains(body, "run-1") || !strings.Contains(body, "/dashboard/assets/app.css") {
 		t.Fatalf("dashboard body missing expected content:\n%s", body)
 	}
+
+	root := httptest.NewRecorder()
+	handler.ServeHTTP(root, httptest.NewRequest(http.MethodGet, "/", nil))
+	if root.Code != http.StatusSeeOther {
+		t.Fatalf("GET / status = %d, want %d", root.Code, http.StatusSeeOther)
+	}
+	if location := root.Header().Get("Location"); location != "/dashboard" {
+		t.Fatalf("GET / redirect location = %q, want /dashboard", location)
+	}
+
+	dashboardSlash := httptest.NewRecorder()
+	handler.ServeHTTP(dashboardSlash, httptest.NewRequest(http.MethodGet, "/dashboard/", nil))
+	if dashboardSlash.Code != http.StatusSeeOther {
+		t.Fatalf("GET /dashboard/ status = %d, want %d", dashboardSlash.Code, http.StatusSeeOther)
+	}
+	if location := dashboardSlash.Header().Get("Location"); location != "/dashboard" {
+		t.Fatalf("GET /dashboard/ redirect location = %q, want /dashboard", location)
+	}
 }
