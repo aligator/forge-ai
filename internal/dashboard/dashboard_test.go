@@ -35,12 +35,14 @@ type failingResumer struct {
 type noopActions struct{}
 
 type recordingActions struct {
-	cancelRunID string
-	retryRunID  string
-	retryNewID  string
-	paused      bool
-	resumed     bool
-	actor       string
+	cancelRunID      string
+	retryRunID       string
+	retryNewID       string
+	paused           bool
+	resumed          bool
+	actor            string
+	maxConcurrent    int
+	maxConcurrentErr error
 }
 
 func (r failingResumer) ManualResume(context.Context, string, string, string, string, string, string) (string, error) {
@@ -62,6 +64,8 @@ func (noopActions) RetryRun(context.Context, string, string) (string, error) {
 func (noopActions) PauseQueue(context.Context, string) {}
 
 func (noopActions) ResumeQueue(context.Context, string) {}
+
+func (noopActions) SetMaxConcurrent(context.Context, int, string) error { return nil }
 
 func (a *recordingActions) CancelRunAs(_ context.Context, id, actor string) bool {
 	a.cancelRunID = id
@@ -86,6 +90,15 @@ func (a *recordingActions) PauseQueue(_ context.Context, actor string) {
 func (a *recordingActions) ResumeQueue(_ context.Context, actor string) {
 	a.resumed = true
 	a.actor = actor
+}
+
+func (a *recordingActions) SetMaxConcurrent(_ context.Context, maxConcurrent int, actor string) error {
+	if a.maxConcurrentErr != nil {
+		return a.maxConcurrentErr
+	}
+	a.maxConcurrent = maxConcurrent
+	a.actor = actor
+	return nil
 }
 
 func (s *memoryStore) ListRuns(_ context.Context, opts runstore.ListRunsOptions) ([]runstore.Run, error) {
@@ -605,6 +618,7 @@ func TestOperatorActionPostsRedirect(t *testing.T) {
 		name         string
 		path         string
 		run          runstore.Run
+		form         url.Values
 		wantLocation string
 		assert       func(*testing.T, *recordingActions)
 	}{
@@ -654,6 +668,18 @@ func TestOperatorActionPostsRedirect(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:         "set max concurrent",
+			path:         "/dashboard/queue/max-concurrent",
+			form:         url.Values{"max_concurrent": {"5"}},
+			wantLocation: "/dashboard",
+			assert: func(t *testing.T, actions *recordingActions) {
+				t.Helper()
+				if actions.maxConcurrent != 5 {
+					t.Fatalf("maxConcurrent = %d, want 5", actions.maxConcurrent)
+				}
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -663,7 +689,14 @@ func TestOperatorActionPostsRedirect(t *testing.T) {
 			mux := http.NewServeMux()
 			handler.Register(mux)
 
-			req := httptest.NewRequest(http.MethodPost, tt.path, nil)
+			var body io.Reader
+			if tt.form != nil {
+				body = strings.NewReader(tt.form.Encode())
+			}
+			req := httptest.NewRequest(http.MethodPost, tt.path, body)
+			if tt.form != nil {
+				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			}
 			req.Header.Set("X-Forwarded-User", "operator")
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)

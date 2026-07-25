@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"net/http"
+	"strconv"
 
 	"codeberg.org/forge-ai/internal/runstore"
 )
@@ -126,6 +127,27 @@ func (h *Handler) resumeQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.actions.ResumeQueue(r.Context(), actorFromRequest(r))
+	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+}
+
+func (h *Handler) setMaxConcurrent(w http.ResponseWriter, r *http.Request) {
+	if h.actions == nil {
+		http.Error(w, "operator actions not supported", http.StatusNotImplemented)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	maxConcurrent, err := strconv.Atoi(r.FormValue("max_concurrent"))
+	if err != nil {
+		http.Error(w, "max_concurrent must be a number", http.StatusBadRequest)
+		return
+	}
+	if err := h.actions.SetMaxConcurrent(r.Context(), maxConcurrent, actorFromRequest(r)); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
 
