@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -73,6 +75,122 @@ func TestSuccessCommentOmitsAgentOutput(t *testing.T) {
 	got := successComment("work", true, "session-123", "")
 	if strings.Contains(got, "Last agent output:") {
 		t.Fatalf("successComment() includes agent output:\n%s", got)
+	}
+}
+
+func TestSuccessCommentUsesFinalMessageTemplate(t *testing.T) {
+	workdir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workdir, ".forge-ai"), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	template := strings.Join([]string{
+		"Done on `{{.Branch}}` for {{.RepoFullName}} {{.TicketKind}} #{{.TicketNumber}}.",
+		"Committed: {{.Committed}}",
+		"Agent: {{.AgentMention}} {{.AgentSessionID}}",
+		"Run: {{.RunID}} {{.CreatedBy}}",
+		"Branch URL: {{.BranchURL}}",
+		"PR: #{{.PullRequest.Number}} {{.PullRequest.URL}}",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(workdir, ".forge-ai", "final-message.md"), []byte(template), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	runner := &workflowRunner{cfg: config.Config{ForgejoURL: "https://forgejo.example"}}
+	state := workflowState{
+		ticket: forgejo.Ticket{
+			Owner:   "ac",
+			Repo:    "demo",
+			Kind:    "issue",
+			Number:  42,
+			HTMLURL: "https://forgejo.example/ac/demo/issues/42",
+		},
+		run: runstore.Run{
+			ID:           "run-42",
+			AgentMention: "@codex",
+			AgentType:    "codex",
+			CreatedBy:    "aligator",
+		},
+		branch:    "forge-ai/ac/demo/issue-42",
+		base:      "main",
+		workdir:   workdir,
+		result:    agent.Result{SessionID: "session-42"},
+		committed: true,
+	}
+	pull := &forgejo.PullRequest{Index: 7, HTMLURL: "https://forgejo.example/ac/demo/pulls/7"}
+
+	got, templated, err := runner.successCommentForState(state, pull)
+	if err != nil {
+		t.Fatalf("successCommentForState() error = %v", err)
+	}
+	if !templated {
+		t.Fatalf("successCommentForState() templated = false, want true")
+	}
+	for _, want := range []string{
+		"Done on `forge-ai/ac/demo/issue-42` for ac/demo issue #42.",
+		"Committed: true",
+		"Agent: @codex session-42",
+		"Run: run-42 aligator",
+		"Branch URL: https://forgejo.example/ac/demo/src/branch/forge-ai%2Fac%2Fdemo%2Fissue-42",
+		"PR: #7 https://forgejo.example/ac/demo/pulls/7",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("successCommentForState() = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestSuccessCommentFallsBackWithoutFinalMessageTemplate(t *testing.T) {
+	runner := &workflowRunner{}
+	state := workflowState{
+		branch:    "work",
+		workdir:   t.TempDir(),
+		result:    agent.Result{SessionID: "session-123"},
+		committed: true,
+	}
+
+	got, templated, err := runner.successCommentForState(state, nil)
+	if err != nil {
+		t.Fatalf("successCommentForState() error = %v", err)
+	}
+	if templated {
+		t.Fatalf("successCommentForState() templated = true, want false")
+	}
+	if !strings.Contains(got, "forge-ai completed work on `work`.") || !strings.Contains(got, "Agent session: `session-123`") {
+		t.Fatalf("successCommentForState() = %q, want fallback comment", got)
+	}
+}
+
+func TestSuccessCommentReturnsTemplateError(t *testing.T) {
+	workdir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workdir, ".forge-ai"), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workdir, ".forge-ai", "final-message.md"), []byte("{{.Missing}}"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	runner := &workflowRunner{}
+
+	_, _, err := runner.successCommentForState(workflowState{workdir: workdir}, nil)
+	if err == nil || !strings.Contains(err.Error(), "render final message template") {
+		t.Fatalf("successCommentForState() error = %v, want render error", err)
+	}
+}
+
+func TestPostFinalSuccessPostsTemplateCommentForTriggerComment(t *testing.T) {
+	forge := &recordingForgejo{}
+	err := postFinalSuccess(context.Background(), forge, forgejo.Ticket{
+		Owner:     "ac",
+		Repo:      "demo",
+		Number:    1,
+		CommentID: 42,
+	}, "custom final", true)
+	if err != nil {
+		t.Fatalf("postFinalSuccess() error = %v", err)
+	}
+	if forge.commentBody != "custom final" {
+		t.Fatalf("commentBody = %q, want custom final", forge.commentBody)
+	}
+	if forge.reactionContent != "" {
+		t.Fatalf("reactionContent = %q, want no reaction", forge.reactionContent)
 	}
 }
 
