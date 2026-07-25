@@ -223,6 +223,42 @@ func TestRunAgentPersistsStreamingLogChunks(t *testing.T) {
 	}
 }
 
+func TestAgentPromptDefaultsUseStoredAgentSettings(t *testing.T) {
+	store := &recordingRunStore{
+		settings: map[string]runstore.AgentSettings{
+			"@codex": {
+				Mention:     "@codex",
+				Enabled:     true,
+				ToolHints:   "- stored hint",
+				AllowGit:    true,
+				AllowGitSet: true,
+			},
+		},
+	}
+	runner := &workflowRunner{
+		cfg: config.Config{
+			AgentAllowGit:  false,
+			AgentToolHints: "- env hint",
+			Agents: []config.AgentRoute{{
+				Mention: "@codex",
+				Agent: config.AgentConfig{
+					ToolHints: "- route hint",
+				},
+			}},
+		},
+		runStore: store,
+		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	allowGit, toolHints := runner.agentPromptDefaults("@codex")
+	if !allowGit {
+		t.Fatal("allowGit = false, want stored true")
+	}
+	if toolHints != "- stored hint" {
+		t.Fatalf("toolHints = %q, want stored value", toolHints)
+	}
+}
+
 func TestRunPreservesChangesWhenAgentFails(t *testing.T) {
 	store := &recordingRunStore{
 		runs: []runstore.Run{{ID: "run-1"}},

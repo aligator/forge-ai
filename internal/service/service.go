@@ -36,6 +36,10 @@ type optionsAgent interface {
 	RunWithOptions(context.Context, agent.RunOptions) (agent.Result, error)
 }
 
+type agentSettingsGetter interface {
+	GetAgentSettings(context.Context, string) (runstore.AgentSettings, error)
+}
+
 type Options struct {
 	Config         config.Config
 	Forgejo        Forgejo
