@@ -156,6 +156,7 @@ type recordingRunStore struct {
 	logs     []runstore.LogChunkInput
 	links    []runstore.LinkInput
 	audit    []runstore.AuditEventInput
+	settings map[string]runstore.AgentSettings
 }
 
 func (s *recordingRunStore) GetRun(_ context.Context, id string) (runstore.Run, error) {
@@ -248,6 +249,19 @@ func (s *recordingRunStore) AddAuditEvent(_ context.Context, in runstore.AuditEv
 	defer s.mu.Unlock()
 	s.audit = append(s.audit, in)
 	return nil
+}
+
+func (s *recordingRunStore) GetAgentSettings(_ context.Context, mention string) (runstore.AgentSettings, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return runstore.AgentSettings{}, runstore.ErrAgentSettingsNotFound
+	}
+	settings, ok := s.settings[mention]
+	if !ok {
+		return runstore.AgentSettings{}, runstore.ErrAgentSettingsNotFound
+	}
+	return settings, nil
 }
 
 func (s *recordingRunStore) hasEvent(eventType string) bool {

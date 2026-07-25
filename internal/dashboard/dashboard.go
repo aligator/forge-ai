@@ -44,6 +44,7 @@ type OperatorActions interface {
 	RetryRun(ctx context.Context, parentRunID, actor string) (string, error)
 	PauseQueue(ctx context.Context, actor string)
 	ResumeQueue(ctx context.Context, actor string)
+	SetMaxConcurrent(ctx context.Context, maxConcurrent int, actor string) error
 }
 
 type Handler struct {
@@ -108,6 +109,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /dashboard/assets/app.css", h.styles)
 	mux.Handle("GET /dashboard/assets/htmx.min.js", http.StripPrefix("/dashboard", http.FileServerFS(assetsFS)))
 	mux.HandleFunc("GET /dashboard", h.overview)
+	mux.HandleFunc("GET /dashboard/{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+	})
 	mux.HandleFunc("GET /dashboard/runs", h.runs)
 	mux.HandleFunc("GET /dashboard/runs/{id}", h.runDetail)
 	mux.HandleFunc("GET /dashboard/runs/{id}/events", h.runEvents)
@@ -117,6 +121,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /dashboard/runs/{id}/stop", h.stopRun)
 	mux.HandleFunc("POST /dashboard/queue/pause", h.pauseQueue)
 	mux.HandleFunc("POST /dashboard/queue/resume", h.resumeQueue)
+	mux.HandleFunc("POST /dashboard/queue/max-concurrent", h.setMaxConcurrent)
 	mux.HandleFunc("GET /dashboard/agents", h.agents)
 	mux.HandleFunc("GET /dashboard/agents/{mention}/models", h.agentModels)
 	mux.HandleFunc("POST /dashboard/agents/{mention}/settings", h.saveAgentSettings)

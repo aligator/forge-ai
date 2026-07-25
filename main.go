@@ -54,6 +54,7 @@ func main() {
 		}
 	}()
 	logger.Info("runstore ready", "path", cfg.RunStorePath)
+	baseAgents := cloneAgentRoutes(cfg.Agents)
 	if err := applyStoredAgentSettings(context.Background(), &cfg, store); err != nil {
 		logger.Error("load agent settings", "error", err)
 		os.Exit(1)
@@ -63,9 +64,9 @@ func main() {
 	forgejoClients := make(map[string]service.Forgejo)
 	for i := range cfg.Agents {
 		route := &cfg.Agents[i]
+		baseRoute := &baseAgents[i]
 		if route.Disabled {
 			logger.Info("agent disabled by settings", "mention", route.Mention, "user", route.User)
-			continue
 		}
 		key := strings.ToLower(route.Mention)
 
@@ -75,6 +76,7 @@ func main() {
 				logger.Warn("could not bootstrap agent token", "user", route.User, "error", err)
 			} else {
 				route.Token = tok
+				baseRoute.Token = tok
 				logger.Info("bootstrapped agent token", "user", route.User)
 			}
 		}
@@ -91,7 +93,8 @@ func main() {
 			"GIT_COMMITTER_NAME=" + route.Git.UserName,
 			"GIT_COMMITTER_EMAIL=" + route.Git.UserEmail,
 		}
-		agents[key] = agent.NewRunner(route.Agent, logger)
+		baseRoute.Agent.ExtraEnv = append([]string(nil), route.Agent.ExtraEnv...)
+		agents[key] = newStoredSettingsAgent(route.Mention, baseRoute.Agent, store, logger)
 		forgejoClients[key] = forgejo.NewClient(cfg.ForgejoURL, token)
 		logger.Info("registered agent", "mention", route.Mention, "user", route.User, "bin", route.Agent.Bin, "command_configured", route.Agent.CommandTemplate != "")
 	}
@@ -140,30 +143,60 @@ func main() {
 	}
 }
 
+func cloneAgentRoutes(routes []config.AgentRoute) []config.AgentRoute {
+	out := append([]config.AgentRoute(nil), routes...)
+	for i := range out {
+		out[i].Agent.Args = append([]string(nil), routes[i].Agent.Args...)
+		out[i].Agent.ExtraEnv = append([]string(nil), routes[i].Agent.ExtraEnv...)
+	}
+	return out
+}
+
+type storedSettingsAgent struct {
+	mention string
+	base    config.AgentConfig
+	store   interface {
+		GetAgentSettings(context.Context, string) (runstore.AgentSettings, error)
+	}
+	logger *slog.Logger
+}
+
+func newStoredSettingsAgent(mention string, base config.AgentConfig, store *runstore.SQLiteStore, logger *slog.Logger) *storedSettingsAgent {
+	return &storedSettingsAgent{
+		mention: mention,
+		base:    base,
+		store:   store,
+		logger:  logger,
+	}
+}
+
+func (a *storedSettingsAgent) Run(ctx context.Context, workdir, prompt, sessionID string) (agent.Result, error) {
+	return a.RunWithOptions(ctx, agent.RunOptions{
+		Workdir:   workdir,
+		Prompt:    prompt,
+		SessionID: sessionID,
+	})
+}
+
+func (a *storedSettingsAgent) RunWithOptions(ctx context.Context, options agent.RunOptions) (agent.Result, error) {
+	cfg := a.base
+	if a.store != nil {
+		settings, err := a.store.GetAgentSettings(ctx, a.mention)
+		switch {
+		case err == nil:
+			config.ApplyAgentSettingsToAgentConfig(&cfg, settings)
+		case !errors.Is(err, runstore.ErrAgentSettingsNotFound) && a.logger != nil:
+			a.logger.Warn("load agent settings for run failed", "mention", a.mention, "error", err)
+		}
+	}
+	return agent.NewRunner(cfg, a.logger).RunWithOptions(ctx, options)
+}
+
 func applyStoredAgentSettings(ctx context.Context, cfg *config.Config, store *runstore.SQLiteStore) error {
 	settings, err := store.ListAgentSettings(ctx)
 	if err != nil {
 		return err
 	}
-	byMention := make(map[string]runstore.AgentSettings, len(settings))
-	for _, item := range settings {
-		byMention[strings.ToLower(item.Mention)] = item
-	}
-	for i := range cfg.Agents {
-		route := &cfg.Agents[i]
-		setting, ok := byMention[strings.ToLower(route.Mention)]
-		if !ok {
-			continue
-		}
-		route.Disabled = !setting.Enabled
-		route.Agent.Model = setting.Model
-		route.Agent.Args = append([]string(nil), setting.Args...)
-		route.Agent.Timeout = setting.Timeout
-		route.Agent.ToolHints = setting.ToolHints
-		if setting.AllowGitSet {
-			route.Agent.AllowGit = setting.AllowGit
-			route.Agent.AllowGitSet = true
-		}
-	}
+	config.ApplyAgentSettings(cfg, settings)
 	return nil
 }

@@ -73,7 +73,7 @@ func (r *Runner) RunWithOptions(ctx context.Context, options RunOptions) (Result
 		cmd = exec.CommandContext(ctx, "sh", "-c", r.cfg.CommandTemplate)
 		cmd.Env = effectiveEnv(append(r.cfg.ExtraEnv, "FORGE_AI_PROMPT="+options.Prompt, "FORGE_AI_SESSION_ID="+options.SessionID)...)
 	} else {
-		invocation := adapter.Invocation(r.cfg.Args, options.Prompt, options.SessionID)
+		invocation := adapter.Invocation(argsWithModel(r.cfg.Args, r.cfg.Model), options.Prompt, options.SessionID)
 		if invocation.SessionID != "" {
 			knownSessionID = invocation.SessionID
 		}
@@ -111,6 +111,15 @@ func (r *Runner) RunWithOptions(ctx context.Context, options RunOptions) (Result
 		err = writerErr
 	}
 	return Result{Output: collector.Tail(), SessionID: collector.SessionID()}, err
+}
+
+func argsWithModel(args []string, model string) []string {
+	args = append([]string(nil), args...)
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return args
+	}
+	return ensureFlagValue(args, "--model", model)
 }
 
 func effectiveEnv(extra ...string) []string {

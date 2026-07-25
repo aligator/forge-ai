@@ -134,6 +134,10 @@ const templates = `
 		<span class="pill">{{.Runtime.UsedSlots}}/{{.Runtime.MaxConcurrent}} slots</span>
 		<span class="pill">Paused: {{if .Runtime.Paused}}yes{{else}}no{{end}}</span>
 		{{if .CanOperate}}
+		<form method="post" action="/dashboard/queue/max-concurrent" class="inline-form">
+			<input type="number" name="max_concurrent" min="1" value="{{.Runtime.MaxConcurrent}}" class="inline-form__input--number" aria-label="Slot count">
+			<button type="submit" class="button button--small">Set slots</button>
+		</form>
 		{{if .Runtime.Paused}}
 		<form method="post" action="/dashboard/queue/resume" class="inline-form"><button type="submit" class="button button--small">Resume queue</button></form>
 		{{else}}

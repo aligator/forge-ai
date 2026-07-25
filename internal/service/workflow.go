@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"text/template"
 	"time"
 
 	"codeberg.org/forge-ai/internal/agent"
@@ -38,6 +40,43 @@ type workflowState struct {
 	pushed    bool
 }
 
+type finalMessagePullRequest struct {
+	Number  int
+	URL     string
+	HTMLURL string
+	Text    string
+}
+
+type finalMessageData struct {
+	RunID             string
+	RunKind           runstore.RunKind
+	ParentRunID       string
+	CreatedBy         string
+	Owner             string
+	Repo              string
+	RepoFullName      string
+	RepositoryURL     string
+	TicketKind        string
+	TicketNumber      int
+	TicketTitle       string
+	TicketBody        string
+	TicketURL         string
+	IssueURL          string
+	Branch            string
+	BranchURL         string
+	Base              string
+	Committed         bool
+	AgentMention      string
+	AgentType         string
+	AgentID           string
+	AgentSessionID    string
+	ForgejoURL        string
+	PullRequestNumber int
+	PullRequestURL    string
+	PullRequestText   string
+	PullRequest       finalMessagePullRequest
+}
+
 func (r *workflowRunner) run(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, ag Agent, run runstore.Run, identity config.GitIdentity) error {
 	state := workflowState{
 		ticket: ticket,
@@ -57,11 +96,11 @@ func (r *workflowRunner) run(ctx context.Context, fc Forgejo, ticket forgejo.Tic
 	if err := r.commitAndPush(ctx, fc, &state); err != nil {
 		return err
 	}
-	prText, err := r.ensurePullRequestText(ctx, fc, state)
+	pull, err := r.ensurePullRequest(ctx, fc, state)
 	if err != nil {
 		return err
 	}
-	return r.finishWorkflow(ctx, fc, state, prText)
+	return r.finishWorkflow(ctx, fc, state, pull)
 }
 
 func (r *workflowRunner) startWorkflow(ctx context.Context, fc Forgejo, state workflowState) {
@@ -135,6 +174,18 @@ func (r *workflowRunner) agentPromptDefaults(mention string) (bool, string) {
 		}
 		break
 	}
+	if store, ok := r.runStore.(agentSettingsGetter); ok {
+		settings, err := store.GetAgentSettings(context.Background(), mention)
+		switch {
+		case err == nil:
+			if settings.AllowGitSet {
+				allowGit = settings.AllowGit
+			}
+			toolHints = settings.ToolHints
+		case !errors.Is(err, runstore.ErrAgentSettingsNotFound) && r.logger != nil:
+			r.logger.Warn("load agent prompt settings failed", "mention", mention, "error", err)
+		}
+	}
 	return allowGit, toolHints
 }
 
@@ -182,25 +233,29 @@ func (r *workflowRunner) commitAndPushChanges(ctx context.Context, state *workfl
 	return nil
 }
 
-func (r *workflowRunner) ensurePullRequestText(ctx context.Context, fc Forgejo, state workflowState) (string, error) {
+func (r *workflowRunner) ensurePullRequest(ctx context.Context, fc Forgejo, state workflowState) (*forgejo.PullRequest, error) {
 	if !r.cfg.CreatePR || state.ticket.Kind != "issue" {
-		return "", nil
+		return nil, nil
 	}
 	pull, err := ensurePullRequest(ctx, fc, state.ticket, state.branch, state.base)
 	if err != nil {
 		r.failWorkflow(ctx, fc, state, err)
-		return "", err
+		return nil, err
 	}
 	if pull == nil {
-		return "", nil
+		return nil, nil
 	}
 	r.addRunLink(ctx, state.run.ID, "pull_request", pull.HTMLURL, fmt.Sprintf("PR #%d", pull.NumberValue()))
-	return fmt.Sprintf("\n\nPull request: %s", firstNonEmpty(pull.HTMLURL, fmt.Sprintf("#%d", pull.NumberValue()))), nil
+	return pull, nil
 }
 
-func (r *workflowRunner) finishWorkflow(ctx context.Context, fc Forgejo, state workflowState, prText string) error {
-	comment := successComment(state.branch, state.committed, state.result.SessionID, prText)
-	if err := postSuccess(ctx, fc, state.ticket, comment); err != nil {
+func (r *workflowRunner) finishWorkflow(ctx context.Context, fc Forgejo, state workflowState, pull *forgejo.PullRequest) error {
+	comment, templated, err := r.successCommentForState(state, pull)
+	if err != nil {
+		r.failWorkflow(ctx, fc, state, err)
+		return err
+	}
+	if err := postFinalSuccess(ctx, fc, state.ticket, comment, templated); err != nil {
 		r.finishRun(ctx, state.run.ID, runstore.StatusFailed, err)
 		return err
 	}
@@ -473,6 +528,13 @@ func postStart(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, branch st
 }
 
 func postSuccess(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, body string) error {
+	return postFinalSuccess(ctx, fc, ticket, body, false)
+}
+
+func postFinalSuccess(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, body string, forceComment bool) error {
+	if forceComment {
+		return fc.CreateIssueComment(ctx, ticket.Owner, ticket.Repo, ticket.Number, body)
+	}
 	if ticket.CommentID != 0 {
 		if strings.Contains(body, "Agent session:") {
 			return fc.CreateIssueComment(ctx, ticket.Owner, ticket.Repo, ticket.Number, body)
@@ -496,6 +558,109 @@ func successComment(branch string, committed bool, sessionID, prText string) str
 		status += "\n\nAgent session: `" + sanitizeInline(sessionID) + "`"
 	}
 	return status + prText
+}
+
+func (r *workflowRunner) successCommentForState(state workflowState, pull *forgejo.PullRequest) (string, bool, error) {
+	data := finalMessageTemplateData(r.cfg, state, pull)
+	templateBody, ok, err := readFinalMessageTemplate(state.workdir)
+	if err != nil {
+		return "", false, err
+	}
+	if !ok {
+		return successComment(state.branch, state.committed, state.result.SessionID, data.PullRequestText), false, nil
+	}
+	comment, err := renderFinalMessageTemplate(templateBody, data)
+	if err != nil {
+		return "", false, err
+	}
+	return comment, true, nil
+}
+
+func finalMessageTemplateData(cfg config.Config, state workflowState, pull *forgejo.PullRequest) finalMessageData {
+	forgejoURL := strings.TrimRight(cfg.ForgejoURL, "/")
+	data := finalMessageData{
+		RunID:          state.run.ID,
+		RunKind:        state.run.Kind,
+		ParentRunID:    state.run.ParentRunID,
+		CreatedBy:      state.run.CreatedBy,
+		Owner:          state.ticket.Owner,
+		Repo:           state.ticket.Repo,
+		RepoFullName:   state.ticket.Owner + "/" + state.ticket.Repo,
+		RepositoryURL:  forgejoRepoURL(forgejoURL, state.ticket.Owner, state.ticket.Repo),
+		TicketKind:     state.ticket.Kind,
+		TicketNumber:   state.ticket.Number,
+		TicketTitle:    state.ticket.Title,
+		TicketBody:     state.ticket.Body,
+		TicketURL:      state.ticket.HTMLURL,
+		IssueURL:       state.ticket.HTMLURL,
+		Branch:         state.branch,
+		BranchURL:      forgejoBranchURL(forgejoURL, state.ticket.Owner, state.ticket.Repo, state.branch),
+		Base:           state.base,
+		Committed:      state.committed,
+		AgentMention:   state.run.AgentMention,
+		AgentType:      state.run.AgentType,
+		AgentID:        state.result.SessionID,
+		AgentSessionID: state.result.SessionID,
+		ForgejoURL:     forgejoURL,
+	}
+	if pull != nil {
+		number := pull.NumberValue()
+		url := firstNonEmpty(pull.HTMLURL, fmt.Sprintf("#%d", number))
+		text := fmt.Sprintf("\n\nPull request: %s", url)
+		data.PullRequestNumber = number
+		data.PullRequestURL = url
+		data.PullRequestText = text
+		data.PullRequest = finalMessagePullRequest{
+			Number:  number,
+			URL:     url,
+			HTMLURL: pull.HTMLURL,
+			Text:    text,
+		}
+	}
+	return data
+}
+
+func forgejoRepoURL(base, owner, repo string) string {
+	if base == "" || owner == "" || repo == "" {
+		return ""
+	}
+	return base + "/" + owner + "/" + repo
+}
+
+func forgejoBranchURL(base, owner, repo, branch string) string {
+	repoURL := forgejoRepoURL(base, owner, repo)
+	if repoURL == "" || branch == "" {
+		return ""
+	}
+	return repoURL + "/src/branch/" + url.PathEscape(branch)
+}
+
+func readFinalMessageTemplate(workdir string) (string, bool, error) {
+	path := filepath.Join(workdir, ".forge-ai", "final-message.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("read final message template: %w", err)
+	}
+	body := strings.TrimSpace(string(data))
+	if body == "" {
+		return "", false, nil
+	}
+	return body, true, nil
+}
+
+func renderFinalMessageTemplate(body string, data finalMessageData) (string, error) {
+	tmpl, err := template.New("final-message.md").Option("missingkey=error").Parse(body)
+	if err != nil {
+		return "", fmt.Errorf("parse final message template: %w", err)
+	}
+	var rendered strings.Builder
+	if err := tmpl.Execute(&rendered, data); err != nil {
+		return "", fmt.Errorf("render final message template: %w", err)
+	}
+	return strings.TrimSpace(rendered.String()), nil
 }
 
 func sanitizeInline(value string) string {
