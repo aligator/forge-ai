@@ -108,6 +108,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /dashboard/assets/app.css", h.styles)
 	mux.Handle("GET /dashboard/assets/htmx.min.js", http.StripPrefix("/dashboard", http.FileServerFS(assetsFS)))
 	mux.HandleFunc("GET /dashboard", h.overview)
+	mux.HandleFunc("GET /dashboard/{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+	})
 	mux.HandleFunc("GET /dashboard/runs", h.runs)
 	mux.HandleFunc("GET /dashboard/runs/{id}", h.runDetail)
 	mux.HandleFunc("GET /dashboard/runs/{id}/events", h.runEvents)
