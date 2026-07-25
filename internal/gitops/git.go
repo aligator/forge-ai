@@ -3,6 +3,7 @@ package gitops
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"codeberg.org/forge-ai/internal/config"
 )
@@ -166,8 +168,74 @@ func (g *Git) CommitIfDirty(ctx context.Context, workdir, message string) (bool,
 
 func (g *Git) Push(ctx context.Context, workdir, branch string) error {
 	branch = BranchRefName(branch)
-	_, err := run(ctx, workdir, "git", "push", "-u", g.cfg.RemoteName, branch)
-	return err
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := g.mergeRemoteBranch(ctx, workdir, branch); err != nil {
+			var mergeErr remoteMergeError
+			if errors.As(err, &mergeErr) {
+				return g.preservePushConflict(ctx, workdir, branch, mergeErr.Err)
+			}
+			return err
+		}
+		_, err := run(ctx, workdir, "git", "push", "-u", g.cfg.RemoteName, branch)
+		if err == nil {
+			return nil
+		}
+		if attempt == 1 {
+			return err
+		}
+	}
+	return nil
+}
+
+type remoteMergeError struct {
+	Err error
+}
+
+func (e remoteMergeError) Error() string {
+	return e.Err.Error()
+}
+
+func (e remoteMergeError) Unwrap() error {
+	return e.Err
+}
+
+func (g *Git) mergeRemoteBranch(ctx context.Context, workdir, branch string) error {
+	branch = BranchRefName(branch)
+	if !g.RemoteBranchExists(ctx, workdir, branch) {
+		return nil
+	}
+	if _, err := run(ctx, workdir, "git", "fetch", g.cfg.RemoteName, branch); err != nil {
+		return err
+	}
+	remoteRef := g.cfg.RemoteName + "/" + branch
+	if _, err := run(ctx, workdir, "git", "merge-base", "--is-ancestor", remoteRef, "HEAD"); err == nil {
+		return nil
+	}
+	_, err := run(ctx, workdir, "git", "merge", "--no-edit", remoteRef)
+	if err != nil {
+		return remoteMergeError{Err: err}
+	}
+	return nil
+}
+
+func (g *Git) preservePushConflict(ctx context.Context, workdir, branch string, mergeErr error) error {
+	if _, abortErr := run(ctx, workdir, "git", "merge", "--abort"); abortErr != nil {
+		return fmt.Errorf("%w; preserve failed: %v", mergeErr, abortErr)
+	}
+	recoveryBranch := recoveryBranchName(branch, time.Now().UTC())
+	if _, pushErr := run(ctx, workdir, "git", "push", g.cfg.RemoteName, "HEAD:refs/heads/"+recoveryBranch); pushErr != nil {
+		return fmt.Errorf("%w; preserve failed: %v", mergeErr, pushErr)
+	}
+	return fmt.Errorf("%w; committed work preserved on %s", mergeErr, recoveryBranch)
+}
+
+func recoveryBranchName(branch string, now time.Time) string {
+	branch = BranchRefName(branch)
+	suffix := now.Format("20060102-150405")
+	if branch == "" {
+		return "forge-ai/recovery/" + suffix
+	}
+	return branch + "-forge-ai-recovery-" + suffix
 }
 
 func (g *Git) RemoteBranchExists(ctx context.Context, workdir, branch string) bool {

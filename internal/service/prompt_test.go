@@ -69,6 +69,27 @@ func TestPromptTellsAgentToKeepImplementationClean(t *testing.T) {
 	}
 }
 
+func TestPromptTellsAgentToMergeBaseBeforeFinishing(t *testing.T) {
+	got := prompt(forgejo.Ticket{
+		Owner:       "ac",
+		Repo:        "demo",
+		Kind:        "issue",
+		Number:      1,
+		Instruction: "@forge-ai implement",
+	}, "forge-ai/ac/demo/issue-1", "main", false, "")
+
+	for _, want := range []string{
+		"Merge assistance:",
+		"fetch the base branch and merge it into the current branch",
+		"If the merge has conflicts you can confidently resolve",
+		"abort the merge, keep your task changes intact",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("prompt() missing %q in:\n%s", want, got)
+		}
+	}
+}
+
 func TestSessionIDFromInstructionUsesTokenAfterMention(t *testing.T) {
 	routes := []config.AgentRoute{{Mention: "@claude"}}
 	got := sessionIDFromInstruction("@claude session-123 continue work", routes)

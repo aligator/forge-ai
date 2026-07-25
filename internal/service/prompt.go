@@ -9,9 +9,9 @@ import (
 )
 
 func prompt(ticket forgejo.Ticket, branch, base string, allowGit bool, toolHints string) string {
-	gitPolicy := `Repo already on branch. No git cmds. Edit files only; forge-ai commits+pushes.`
+	gitPolicy := `Repo already on branch. No git cmds except the base-merge check below. Edit files only otherwise; forge-ai commits+pushes.`
 	if allowGit {
-		gitPolicy = `Repo already on branch. Stay there. Allowed: git status, diff, add, commit. Forbidden: create/switch/reset/rebase/merge/delete branches, push. forge-ai pushes+posts.`
+		gitPolicy = `Repo already on branch. Stay there. Allowed: git status, diff, add, commit, fetch the base branch, and merge the base branch into the current branch. Forbidden: create/switch/reset/rebase/delete branches, push. forge-ai pushes+posts.`
 	}
 	var toolSection string
 	if strings.TrimSpace(toolHints) != "" {
@@ -50,6 +50,12 @@ Implementation rules:
 - If an attempt failed, clean up abandoned code before moving on.
 - Structure code cleanly from the start with sensible architecture, not everything in one file.
 - Your training data has a knowledge cutoff. Always look up the latest stable versions of tools, libraries, and APIs before using them — never assume your known version is current.
+
+Merge assistance:
+- Before finishing, fetch the base branch and merge it into the current branch if possible.
+- Use the configured remote name when it is discoverable; otherwise use origin.
+- If the merge has conflicts you can confidently resolve, resolve them, validate, and continue.
+- If the merge has conflicts you cannot safely resolve, abort the merge, keep your task changes intact, and report the blocker in a Forgejo comment.
 
 Blocked? Post a Forgejo comment explaining the blocker. Otherwise implement directly — do not ask for confirmation on steps the task already specifies.
 
