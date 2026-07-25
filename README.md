@@ -18,6 +18,23 @@ Issue branch format:
 forge-ai/<owner>/<repo>/<issue-or-pr>-<number>
 ```
 
+## Project templates
+
+Projects can customize the final Forgejo comment by adding `.forge-ai/final-message.md` next to `.forge-ai/instructions.md`. The file is rendered as a Go `text/template`; missing or empty files use the built-in final message.
+
+Available template variables include:
+
+```text
+{{.RunID}} {{.RunKind}} {{.ParentRunID}} {{.CreatedBy}}
+{{.Owner}} {{.Repo}} {{.RepoFullName}} {{.RepositoryURL}}
+{{.TicketKind}} {{.TicketNumber}} {{.TicketTitle}} {{.TicketBody}} {{.TicketURL}} {{.IssueURL}}
+{{.Branch}} {{.BranchURL}} {{.Base}} {{.Committed}}
+{{.AgentMention}} {{.AgentType}} {{.AgentID}} {{.AgentSessionID}}
+{{.ForgejoURL}}
+{{.PullRequestNumber}} {{.PullRequestURL}} {{.PullRequestText}}
+{{.PullRequest.Number}} {{.PullRequest.URL}} {{.PullRequest.HTMLURL}} {{.PullRequest.Text}}
+```
+
 ## Local Forgejo
 
 Create a local env file:
