@@ -35,50 +35,31 @@ checksum:
   name_template: checksums.txt
 
 dockers_v2:
+  # Single image build. All heavy layers come from the prebuilt forge-ai-base
+  # image (see Dockerfile.base / base-image.yml), so this only stacks the
+  # release binary on top. Both the version tag and (for non-prereleases)
+  # latest are produced from one build instead of two.
   - id: forge-ai
     dockerfile: Dockerfile
     build_args:
       BINARY_PROVIDER: prebuilt
+      BASE_IMAGE: "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/forge-ai-base:latest"
     extra_files:
       - scripts/docker-entrypoint.sh
       - scripts/forge-ai-mock-agent
-      - scripts/agent-config/claude.json
-      - scripts/agent-config/claude-settings.json
-      - scripts/agent-config/codex.toml
-      - scripts/agent-config/opencode.json
     images:
       - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/forge-ai"
     tags:
       - "{{ .Version }}"
+      # Renders to "latest" on a normal release; on a prerelease it renders to
+      # the version tag again (a harmless duplicate) so latest is not moved.
+      - "{{ if .Prerelease }}{{ .Version }}{{ else }}latest{{ end }}"
     platforms:
       - linux/amd64
       - linux/arm64
     labels:
       org.opencontainers.image.version: "{{ .Version }}"
       org.opencontainers.image.revision: "{{ .FullCommit }}"
-
-  - id: forge-ai-latest
-    dockerfile: Dockerfile
-    build_args:
-      BINARY_PROVIDER: prebuilt
-    extra_files:
-      - scripts/docker-entrypoint.sh
-      - scripts/forge-ai-mock-agent
-      - scripts/agent-config/claude.json
-      - scripts/agent-config/claude-settings.json
-      - scripts/agent-config/codex.toml
-      - scripts/agent-config/opencode.json
-    images:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/forge-ai"
-    tags:
-      - "latest"
-    platforms:
-      - linux/amd64
-      - linux/arm64
-    labels:
-      org.opencontainers.image.version: "{{ .Version }}"
-      org.opencontainers.image.revision: "{{ .FullCommit }}"
-    disable: "{{ if .Prerelease }}true{{ end }}"
 
 changelog:
   sort: asc
