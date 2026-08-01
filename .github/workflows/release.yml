@@ -11,7 +11,43 @@ permissions:
   packages: write
 
 jobs:
+  # Always (re)build the base image before the release. Registry layer cache
+  # means an unchanged base is a fast cache hit rather than a full rebuild, so
+  # the heavy layers (apt/npm/playwright/nix) only actually rebuild when
+  # Dockerfile.base or agent config changes. Guarantees the base exists before
+  # goreleaser consumes it.
+  base-image:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push base image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.base
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/forge-ai-base:latest
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/forge-ai-base:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/forge-ai-base:buildcache,mode=max
+
   goreleaser:
+    needs: base-image
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
