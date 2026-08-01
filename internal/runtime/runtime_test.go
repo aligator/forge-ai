@@ -50,10 +50,12 @@ func TestSubmitWebhookRunLimitsConcurrencyAndShowsPending(t *testing.T) {
 	}
 }
 
-func TestSubmitWebhookRunBlocksDuplicateTicketAndBranch(t *testing.T) {
+func TestSubmitWebhookRunWaitsForDuplicateTicketAndBranch(t *testing.T) {
 	rt := New(2)
 	firstRelease := make(chan struct{})
 	firstStarted := make(chan struct{})
+	ticketStarted := make(chan struct{})
+	branchStarted := make(chan struct{})
 	errs := make(chan error, 3)
 
 	go func() {
@@ -65,33 +67,34 @@ func TestSubmitWebhookRunBlocksDuplicateTicketAndBranch(t *testing.T) {
 	}()
 	waitForClosed(t, firstStarted)
 
-	err := rt.SubmitWebhookRun(context.Background(), RunSpec{TicketRef: "issue-1", Branch: "branch-2"}, func(context.Context) error {
-		t.Fatal("duplicate ticket run should not execute")
-		return nil
-	})
-	if !errors.Is(err, ErrTicketActive) {
-		t.Fatalf("duplicate ticket error = %v, want ErrTicketActive", err)
-	}
+	go func() {
+		errs <- rt.SubmitWebhookRun(context.Background(), RunSpec{TicketRef: "issue-1", Branch: "branch-2"}, func(context.Context) error {
+			close(ticketStarted)
+			return nil
+		})
+	}()
+	go func() {
+		errs <- rt.SubmitWebhookRun(context.Background(), RunSpec{TicketRef: "issue-2", Branch: "branch-1"}, func(context.Context) error {
+			close(branchStarted)
+			return nil
+		})
+	}()
 
-	err = rt.SubmitWebhookRun(context.Background(), RunSpec{TicketRef: "issue-2", Branch: "branch-1"}, func(context.Context) error {
-		t.Fatal("duplicate branch run should not execute")
-		return nil
+	waitFor(t, func() bool {
+		return len(rt.Snapshot().BlockedRuns) == 2
 	})
-	if !errors.Is(err, ErrBranchActive) {
-		t.Fatalf("duplicate branch error = %v, want ErrBranchActive", err)
-	}
-
 	snap := rt.Snapshot()
-	if len(snap.BlockedRuns) != 2 {
-		t.Fatalf("blocked runs = %d, want 2", len(snap.BlockedRuns))
-	}
 	if snap.BlockedRuns[0].BlockReason != BlockReasonTicketActive || snap.BlockedRuns[1].BlockReason != BlockReasonBranchActive {
 		t.Fatalf("blocked reasons = %q, %q", snap.BlockedRuns[0].BlockReason, snap.BlockedRuns[1].BlockReason)
 	}
 
 	close(firstRelease)
-	if err := <-errs; err != nil {
-		t.Fatalf("first run error = %v", err)
+	waitForClosed(t, ticketStarted)
+	waitForClosed(t, branchStarted)
+	for i := 0; i < 3; i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("SubmitWebhookRun() error = %v", err)
+		}
 	}
 
 	snap = rt.Snapshot()
