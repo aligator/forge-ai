@@ -479,7 +479,7 @@ func ensurePullRequest(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, b
 		Base:  base,
 		Head:  branch,
 		Title: "forge-ai: " + ticket.Title,
-		Body:  fmt.Sprintf("Closes #%d\n\nAutomated work for %s #%d.\n\n%s", ticket.Number, ticket.Kind, ticket.Number, ticket.HTMLURL),
+		Body:  fmt.Sprintf("Automated work for %s #%d.\n\nCloses %s", ticket.Kind, ticket.Number, ticket.Number),
 	})
 	if err == nil {
 		return created, nil

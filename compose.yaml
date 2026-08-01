@@ -87,7 +87,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       AGENT_0_USER: ${AGENT_0_USER:-claude}
       AGENT_0_BIN: ${AGENT_0_BIN:-claude}
-      AGENT_0_ARGS: ${AGENT_0_ARGS:---dangerously-skip-permissions --output-format stream-json -p}
+      AGENT_0_ARGS: ${AGENT_0_ARGS:---dangerously-skip-permissions --verbose --output-format stream-json -p}
       AGENT_0_TIMEOUT: ${AGENT_0_TIMEOUT:-30m}
       AGENT_0_GIT_USER_NAME: ${AGENT_0_GIT_USER_NAME:-Claude Bot}
       AGENT_0_GIT_USER_EMAIL: ${AGENT_0_GIT_USER_EMAIL:-claude@example.invalid}

@@ -47,28 +47,32 @@ func New(cfg config.Config, workflow Workflow, dashboardStore dashboard.Store, l
 
 func handleWebhook(cfg config.Config, workflow Workflow, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		event := firstHeader(r, "X-Forgejo-Event", "X-Gitea-Event")
+		if event == "" {
+			event = "unknown"
+		}
+		logger.Info("webhook received", "event", event, "delivery", firstHeader(r, "X-Forgejo-Delivery", "X-Gitea-Delivery"), "remote", r.RemoteAddr)
+
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 10<<20))
 		if err != nil {
+			logger.Warn("webhook read body failed", "event", event, "error", err)
 			http.Error(w, "read body", http.StatusBadRequest)
 			return
 		}
 
 		if err := verifySignature(r, body, cfg.WebhookSecret); err != nil {
+			logger.Warn("webhook rejected: invalid signature", "event", event, "error", err)
 			http.Error(w, "invalid signature", http.StatusUnauthorized)
 			return
 		}
 
 		var payload forgejo.WebhookPayload
 		if err := json.Unmarshal(body, &payload); err != nil {
+			logger.Warn("webhook rejected: invalid json", "event", event, "error", err)
 			http.Error(w, "invalid json", http.StatusBadRequest)
 			return
 		}
 		payload.Raw = append([]byte(nil), body...)
-
-		event := firstHeader(r, "X-Forgejo-Event", "X-Gitea-Event")
-		if event == "" {
-			event = "unknown"
-		}
 
 		go func() {
 			if err := workflow.Handle(context.Background(), event, payload); err != nil {

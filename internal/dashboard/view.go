@@ -344,31 +344,27 @@ func agentSettingsFromRoute(route config.AgentRoute, toolHints string, allowGit 
 }
 
 func (h *Handler) agentValidation(index int, route config.AgentRoute) []validationResult {
-	var results []validationResult
-	results = append(results,
-		validationResult{
+	mentionOK := strings.TrimSpace(route.Mention) != ""
+	userOK := strings.TrimSpace(route.User) != ""
+	commandOK := strings.TrimSpace(route.Agent.Bin) != "" || strings.TrimSpace(route.Agent.CommandTemplate) != ""
+	return []validationResult{
+		{
 			Label:   "Mention",
-			OK:      strings.TrimSpace(route.Mention) != "",
-			Message: validationMessage(strings.TrimSpace(route.Mention) != "", route.Mention, "missing AGENT_"+strconv.Itoa(index)+"_USER"),
+			OK:      mentionOK,
+			Message: validationMessage(mentionOK, "ok", "missing AGENT_"+strconv.Itoa(index)+"_USER"),
 		},
-		validationResult{
+		{
 			Label:   "Forgejo user",
-			OK:      strings.TrimSpace(route.User) != "",
-			Message: validationMessage(strings.TrimSpace(route.User) != "", route.User, "missing"),
+			OK:      userOK,
+			Message: validationMessage(userOK, "ok", "missing"),
 		},
-		validationResult{
+		{
 			Label:   "Command",
-			OK:      strings.TrimSpace(route.Agent.Bin) != "" || strings.TrimSpace(route.Agent.CommandTemplate) != "",
-			Message: validationMessage(strings.TrimSpace(route.Agent.Bin) != "" || strings.TrimSpace(route.Agent.CommandTemplate) != "", "configured", "missing binary or command"),
-		},
-		validationResult{
-			Label:   "Timeout",
-			OK:      route.Agent.Timeout > 0,
-			Message: validationMessage(route.Agent.Timeout > 0, route.Agent.Timeout.String(), "must be positive"),
+			OK:      commandOK,
+			Message: validationMessage(commandOK, "configured", "missing binary or command"),
 		},
 		h.agentBinaryValidation(route),
-	)
-	return results
+	}
 }
 
 func (h *Handler) agentBinaryValidation(route config.AgentRoute) validationResult {

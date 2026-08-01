@@ -418,7 +418,7 @@ const templates = `
 <section class="page-head">
 	<div>
 		<h1>Agents</h1>
-		<p>Env config defines agents and secrets. Saved dashboard values are non-secret overrides and apply after restart.</p>
+		<p>Env config defines agents and secrets. Saved dashboard values are non-secret overrides and apply on the next run.</p>
 	</div>
 </section>
 {{template "error" .}}
@@ -458,7 +458,7 @@ const templates = `
 			<dt>Preview</dt><dd>{{template "command_preview" .CommandPreview}}</dd>
 			<dt>Timeout</dt><dd>{{.Timeout}}</dd>
 			<dt>Source</dt><dd>{{if .Persisted}}dashboard override{{else}}env config{{end}}</dd>
-			<dt>Effect</dt><dd>Restart required</dd>
+			<dt>Effect</dt><dd>Applies on next run</dd>
 			{{if .Persisted}}<dt>Saved</dt><dd>{{formatTime .UpdatedAt}} by {{.UpdatedBy}}</dd>{{end}}
 		</dl>
 		<div class="agent-card__side">

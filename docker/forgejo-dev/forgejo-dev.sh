@@ -208,29 +208,26 @@ seed_file_if_missing ".forge-ai/instructions.md" "seed forge-ai instructions" "$
 EOF
 )"
 
-hooks="$(curl -fsS -H "$auth_header" "${api}/repos/${FORGEJO_BOOTSTRAP_USER}/${FORGEJO_BOOTSTRAP_REPO}/hooks")"
+# Global system webhook: fires for every repo, so no per-repo hook setup is needed.
 hook_events='["issues","issue_comment","pull_request","pull_request_comment"]'
-hook_id="$(printf '%s' "$hooks" | jq -r --arg url "$WEBHOOK_TARGET_URL" '.[] | select(.config.url == $url) | .id' | head -1)"
+system_hooks="$(curl -fsS -H "$auth_header" "${api}/admin/hooks?type=system" || echo '[]')"
+hook_id="$(printf '%s' "$system_hooks" | jq -r --arg url "$WEBHOOK_TARGET_URL" '.[] | select(.config.url == $url) | .id' | head -1)"
 if [ -n "$hook_id" ] && [ "$hook_id" != "null" ]; then
 	hook_payload="$(jq -n --arg url "$WEBHOOK_TARGET_URL" --arg secret "$WEBHOOK_SECRET" --argjson events "$hook_events" \
 		'{config:{url:$url, content_type:"json", secret:$secret}, events:$events, active:true}')"
 	curl -fsS -X PATCH -H "$auth_header" -H "Content-Type: application/json" \
 		-d "$hook_payload" \
-		"${api}/repos/${FORGEJO_BOOTSTRAP_USER}/${FORGEJO_BOOTSTRAP_REPO}/hooks/${hook_id}" >/dev/null
+		"${api}/admin/hooks/${hook_id}" >/dev/null
 else
-	hook_payload="$(jq -n --arg url "$WEBHOOK_TARGET_URL" --arg secret "$WEBHOOK_SECRET" --arg type "forgejo" \
-		--argjson events "$hook_events" \
-		'{type:$type, config:{url:$url, content_type:"json", secret:$secret}, events:$events, active:true}')"
-	curl -fsS -X POST -H "$auth_header" -H "Content-Type: application/json" \
-		-d "$hook_payload" \
-		"${api}/repos/${FORGEJO_BOOTSTRAP_USER}/${FORGEJO_BOOTSTRAP_REPO}/hooks" >/dev/null || {
-		hook_payload="$(jq -n --arg url "$WEBHOOK_TARGET_URL" --arg secret "$WEBHOOK_SECRET" --arg type "gitea" \
+	create_system_hook() {
+		hook_payload="$(jq -n --arg url "$WEBHOOK_TARGET_URL" --arg secret "$WEBHOOK_SECRET" --arg type "$1" \
 			--argjson events "$hook_events" \
 			'{type:$type, config:{url:$url, content_type:"json", secret:$secret}, events:$events, active:true}')"
 		curl -fsS -X POST -H "$auth_header" -H "Content-Type: application/json" \
 			-d "$hook_payload" \
-			"${api}/repos/${FORGEJO_BOOTSTRAP_USER}/${FORGEJO_BOOTSTRAP_REPO}/hooks" >/dev/null
+			"${api}/admin/hooks?type=system" >/dev/null
 	}
+	create_system_hook "forgejo" || create_system_hook "gitea"
 fi
 
 if [ "$FORGEJO_BOOTSTRAP_ISSUE" = "true" ]; then
@@ -255,7 +252,7 @@ Bot user:   ${FORGEJO_BOOTSTRAP_USER} / ${FORGEJO_BOOTSTRAP_PASSWORD}
 Dev user:   ${FORGEJO_DEV_USER} / ${FORGEJO_DEV_PASSWORD}
 Repo:       ${FORGEJO_BOOTSTRAP_USER}/${FORGEJO_BOOTSTRAP_REPO}
 Issue:      Demo: run forge-ai
-Webhook:    ${WEBHOOK_TARGET_URL}
+Webhook:    ${WEBHOOK_TARGET_URL} (system-wide, all repos)
 Agents:     ${FORGEJO_AGENT_USERS:-none} (password: ${FORGEJO_AGENT_PASSWORD})
 EOF
 
