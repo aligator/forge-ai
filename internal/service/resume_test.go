@@ -497,11 +497,11 @@ type spyGit struct {
 	prepare func()
 }
 
-func (g *spyGit) Prepare(_ context.Context, _, _, _, _, _, _, _ string, _ config.GitIdentity) (string, error) {
+func (g *spyGit) Prepare(_ context.Context, _, _, _, _, _, _, _ string, _ config.GitIdentity) (string, bool, error) {
 	if g.prepare != nil {
 		g.prepare()
 	}
-	return g.workdir, nil
+	return g.workdir, false, nil
 }
 
 func (g *spyGit) CommitIfDirty(_ context.Context, _, _ string) (bool, error) { return false, nil }

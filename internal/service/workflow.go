@@ -38,6 +38,7 @@ type workflowState struct {
 	result    agent.Result
 	committed bool
 	pushed    bool
+	emptyRepo bool
 }
 
 type finalMessagePullRequest struct {
@@ -114,7 +115,7 @@ func (r *workflowRunner) startWorkflow(ctx context.Context, fc Forgejo, state wo
 func (r *workflowRunner) prepareWorkspace(ctx context.Context, fc Forgejo, state *workflowState, identity config.GitIdentity) error {
 	token := r.routeToken(state.ticket, fc)
 	cloneURL := rewriteCloneURL(state.ticket.CloneURL, r.cfg.CloneURLBase)
-	workdir, err := r.git.Prepare(ctx, r.cfg.WorkspaceDir, cloneURL, token, state.ticket.Owner, state.ticket.Repo, state.branch, state.base, identity)
+	workdir, emptyRepo, err := r.git.Prepare(ctx, r.cfg.WorkspaceDir, cloneURL, token, state.ticket.Owner, state.ticket.Repo, state.branch, state.base, identity)
 	if err != nil {
 		if ctx.Err() != nil {
 			r.finishRun(context.Background(), state.run.ID, runstore.StatusCanceled, err)
@@ -124,6 +125,12 @@ func (r *workflowRunner) prepareWorkspace(ctx context.Context, fc Forgejo, state
 		return err
 	}
 	state.workdir = workdir
+	if emptyRepo {
+		// No commits yet: the workspace is on the base branch, so the agent
+		// commits and pushes directly to it and no pull request is opened.
+		state.emptyRepo = true
+		state.branch = state.base
+	}
 	r.addRunEvent(ctx, state.run.ID, "workspace_ready", "workspace prepared")
 	r.logger.Info("workspace ready", "workdir", workdir, "branch", state.branch)
 	return nil
@@ -234,7 +241,7 @@ func (r *workflowRunner) commitAndPushChanges(ctx context.Context, state *workfl
 }
 
 func (r *workflowRunner) ensurePullRequest(ctx context.Context, fc Forgejo, state workflowState) (*forgejo.PullRequest, error) {
-	if !r.cfg.CreatePR || state.ticket.Kind != "issue" {
+	if !r.cfg.CreatePR || state.ticket.Kind != "issue" || state.emptyRepo {
 		return nil, nil
 	}
 	pull, err := ensurePullRequest(ctx, fc, state.ticket, state.branch, state.base)
@@ -479,7 +486,7 @@ func ensurePullRequest(ctx context.Context, fc Forgejo, ticket forgejo.Ticket, b
 		Base:  base,
 		Head:  branch,
 		Title: "forge-ai: " + ticket.Title,
-		Body:  fmt.Sprintf("Automated work for %s #%d.\n\nCloses %s", ticket.Kind, ticket.Number, ticket.Number),
+		Body:  fmt.Sprintf("Automated work for %s #%d.\n\nCloses #%d", ticket.Kind, ticket.Number, ticket.Number),
 	})
 	if err == nil {
 		return created, nil

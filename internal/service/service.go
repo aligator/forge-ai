@@ -24,7 +24,7 @@ type Forgejo interface {
 }
 
 type Git interface {
-	Prepare(context.Context, string, string, string, string, string, string, string, config.GitIdentity) (string, error)
+	Prepare(context.Context, string, string, string, string, string, string, string, config.GitIdentity) (string, bool, error)
 	CommitIfDirty(context.Context, string, string) (bool, error)
 	Push(context.Context, string, string) error
 }

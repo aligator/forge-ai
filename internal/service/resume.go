@@ -164,7 +164,7 @@ func (r *workflowRunner) prepareResumeWorkspace(ctx context.Context, parentRun r
 		token := r.tokenForMention(in.AgentMention)
 		cloneURL := strings.TrimRight(r.cfg.ForgejoURL, "/") + "/" + parentRun.Owner + "/" + parentRun.Repo + ".git"
 		cloneURL = rewriteCloneURL(cloneURL, r.cfg.CloneURLBase)
-		workdir, err := r.git.Prepare(ctx, r.cfg.WorkspaceDir, cloneURL, token, parentRun.Owner, parentRun.Repo, parentRun.Branch, parentRun.BaseBranch, identity)
+		workdir, _, err := r.git.Prepare(ctx, r.cfg.WorkspaceDir, cloneURL, token, parentRun.Owner, parentRun.Repo, parentRun.Branch, parentRun.BaseBranch, identity)
 		if err != nil {
 			return "", noop, fmt.Errorf("prepare workspace: %w", err)
 		}
@@ -174,7 +174,7 @@ func (r *workflowRunner) prepareResumeWorkspace(ctx context.Context, parentRun r
 		token := r.tokenForMention(in.AgentMention)
 		cloneURL := strings.TrimRight(r.cfg.ForgejoURL, "/") + "/" + parentRun.Owner + "/" + parentRun.Repo + ".git"
 		cloneURL = rewriteCloneURL(cloneURL, r.cfg.CloneURLBase)
-		workdir, err := r.git.Prepare(ctx, r.cfg.WorkspaceDir, cloneURL, token, parentRun.Owner, parentRun.Repo, parentRun.Branch, parentRun.BaseBranch, identity)
+		workdir, _, err := r.git.Prepare(ctx, r.cfg.WorkspaceDir, cloneURL, token, parentRun.Owner, parentRun.Repo, parentRun.Branch, parentRun.BaseBranch, identity)
 		if err != nil {
 			return "", noop, fmt.Errorf("prepare existing workspace: %w", err)
 		}

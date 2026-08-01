@@ -47,9 +47,13 @@ func New(cfg config.GitConfig, logger *slog.Logger) *Git {
 	return &Git{cfg: cfg, logger: logger}
 }
 
-func (g *Git) Prepare(ctx context.Context, workspaceRoot, cloneURL, token, owner, repo, branch, baseBranch string, identity config.GitIdentity) (string, error) {
+// Prepare checks out a clean workspace for branch. The bool return reports
+// whether the remote repository is empty (no commits yet); in that case the
+// workspace is left on baseBranch so the agent's first commit seeds the repo,
+// and the caller should push baseBranch directly instead of opening a PR.
+func (g *Git) Prepare(ctx context.Context, workspaceRoot, cloneURL, token, owner, repo, branch, baseBranch string, identity config.GitIdentity) (string, bool, error) {
 	if cloneURL == "" {
-		return "", fmt.Errorf("missing clone url")
+		return "", false, fmt.Errorf("missing clone url")
 	}
 	branch = BranchRefName(branch)
 	baseBranch = BranchRefName(baseBranch)
@@ -61,59 +65,69 @@ func (g *Git) Prepare(ctx context.Context, workspaceRoot, cloneURL, token, owner
 		if _, statErr := os.Stat(workdir); statErr == nil {
 			g.logger.Warn("removing stale workspace without .git", "workdir", workdir)
 			if err := ForceRemoveAll(workdir); err != nil {
-				return "", err
+				return "", false, err
 			}
 		}
 		if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
-			return "", err
+			return "", false, err
 		}
 		if _, err := run(ctx, "", "git", "clone", withToken(cloneURL, token), workdir); err != nil {
-			return "", err
+			return "", false, err
 		}
 	}
 
 	if dirty, err := g.IsDirty(ctx, workdir); err != nil {
-		return "", err
+		return "", false, err
 	} else if dirty {
 		g.logger.Warn("workspace dirty, resetting to HEAD", "workdir", workdir)
 		if _, err := run(ctx, workdir, "git", "reset", "--hard", "HEAD"); err != nil {
-			return "", err
+			return "", false, err
 		}
 		if _, err := run(ctx, workdir, "git", "clean", "-fd"); err != nil {
-			return "", err
+			return "", false, err
 		}
 	}
 
 	if _, err := run(ctx, workdir, "git", "config", "user.name", identity.UserName); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if _, err := run(ctx, workdir, "git", "config", "user.email", identity.UserEmail); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if _, err := run(ctx, workdir, "git", "remote", "set-url", g.cfg.RemoteName, withToken(cloneURL, token)); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if _, err := run(ctx, workdir, "git", "fetch", "--prune", g.cfg.RemoteName); err != nil {
-		return "", err
+		return "", false, err
 	}
 	baseBranch = g.resolveBaseBranch(ctx, workdir, baseBranch)
 
 	remoteBranchExists := g.RemoteBranchExists(ctx, workdir, branch)
 	if remoteBranchExists {
 		if err := g.forceSyncBranch(ctx, workdir, branch); err != nil {
-			return "", err
+			return "", false, err
 		}
-		return workdir, nil
+		return workdir, false, nil
+	}
+
+	// Empty remote (no commits yet): there is no base branch to sync from. Leave
+	// the workspace on baseBranch so the agent's first commit seeds the repo; the
+	// caller pushes baseBranch directly instead of opening a PR.
+	if !g.RemoteBranchExists(ctx, workdir, baseBranch) {
+		if _, err := run(ctx, workdir, "git", "checkout", "-B", baseBranch); err != nil {
+			return "", false, err
+		}
+		return workdir, true, nil
 	}
 
 	if err := g.forceSyncBranch(ctx, workdir, baseBranch); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if _, err := run(ctx, workdir, "git", "checkout", "-B", branch); err != nil {
-		return "", err
+		return "", false, err
 	}
 
-	return workdir, nil
+	return workdir, false, nil
 }
 
 func (g *Git) forceSyncBranch(ctx context.Context, workdir, branch string) error {

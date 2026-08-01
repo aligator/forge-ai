@@ -65,7 +65,7 @@ func TestPrepareForceSyncsExistingRemoteBranch(t *testing.T) {
 	runTestGit(t, ctx, seed, "push", "-u", "origin", "feature")
 
 	git := New(config.GitConfig{RemoteName: "origin", GitIdentity: config.GitIdentity{UserName: "Forge AI", UserEmail: "forge-ai@example.invalid"}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	workdir, err := git.Prepare(ctx, workspaceRoot, cloneURL, "", "acme", "demo", "feature", "main", config.GitIdentity{})
+	workdir, _, err := git.Prepare(ctx, workspaceRoot, cloneURL, "", "acme", "demo", "feature", "main", config.GitIdentity{})
 	if err != nil {
 		t.Fatalf("Prepare() initial error = %v", err)
 	}
@@ -77,7 +77,7 @@ func TestPrepareForceSyncsExistingRemoteBranch(t *testing.T) {
 	runTestGit(t, ctx, seed, "commit", "-am", "feature v2")
 	runTestGit(t, ctx, seed, "push", "origin", "feature")
 
-	workdir, err = git.Prepare(ctx, workspaceRoot, cloneURL, "", "acme", "demo", "feature", "main", config.GitIdentity{})
+	workdir, _, err = git.Prepare(ctx, workspaceRoot, cloneURL, "", "acme", "demo", "feature", "main", config.GitIdentity{})
 	if err != nil {
 		t.Fatalf("Prepare() resync error = %v", err)
 	}

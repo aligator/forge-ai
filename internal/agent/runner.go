@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"codeberg.org/forge-ai/internal/config"
@@ -91,6 +92,21 @@ func (r *Runner) RunWithOptions(ctx context.Context, options RunOptions) (Result
 	stderr := newProcessOutputWriter(StreamStderr, os.Stderr, options.Output, collector, redactor.Stream())
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+
+	// Run the agent in its own process group and kill the whole group on
+	// cancellation. The agent CLIs spawn child processes; without this, canceling
+	// the context only kills the direct child and leaves orphans running.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+			return cmd.Process.Kill()
+		}
+		return nil
+	}
+	cmd.WaitDelay = 10 * time.Second
 
 	r.logger.Info("starting agent", "workdir", options.Workdir, "command", redactor.Redact(commandLine(cmd)), "session_id", knownSessionID)
 	if out, err := exec.CommandContext(ctx, "find", options.Workdir, "-maxdepth", "3", "-not", "-path", "*/.git/*").Output(); err == nil {

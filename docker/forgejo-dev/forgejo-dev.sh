@@ -208,27 +208,38 @@ seed_file_if_missing ".forge-ai/instructions.md" "seed forge-ai instructions" "$
 EOF
 )"
 
-# Global system webhook: fires for every repo, so no per-repo hook setup is needed.
 hook_events='["issues","issue_comment","pull_request","pull_request_comment"]'
-system_hooks="$(curl -fsS -H "$auth_header" "${api}/admin/hooks?type=system" || echo '[]')"
-hook_id="$(printf '%s' "$system_hooks" | jq -r --arg url "$WEBHOOK_TARGET_URL" '.[] | select(.config.url == $url) | .id' | head -1)"
-if [ -n "$hook_id" ] && [ "$hook_id" != "null" ]; then
-	hook_payload="$(jq -n --arg url "$WEBHOOK_TARGET_URL" --arg secret "$WEBHOOK_SECRET" --argjson events "$hook_events" \
-		'{config:{url:$url, content_type:"json", secret:$secret}, events:$events, active:true}')"
-	curl -fsS -X PATCH -H "$auth_header" -H "Content-Type: application/json" \
-		-d "$hook_payload" \
-		"${api}/admin/hooks/${hook_id}" >/dev/null
-else
-	create_system_hook() {
-		hook_payload="$(jq -n --arg url "$WEBHOOK_TARGET_URL" --arg secret "$WEBHOOK_SECRET" --arg type "$1" \
-			--argjson events "$hook_events" \
+
+# Idempotently create/update the webhook at $2 (a hooks collection endpoint),
+# matching an existing one by URL from the listing in $1.
+ensure_hook() {
+	existing_id="$(printf '%s' "$1" | jq -r --arg url "$WEBHOOK_TARGET_URL" '.[]? | select(.config.url == $url) | .id' | head -1)"
+	if [ -n "$existing_id" ] && [ "$existing_id" != "null" ]; then
+		payload="$(jq -n --arg url "$WEBHOOK_TARGET_URL" --arg secret "$WEBHOOK_SECRET" --argjson events "$hook_events" \
+			'{config:{url:$url, content_type:"json", secret:$secret}, events:$events, active:true}')"
+		curl -fsS -X PATCH -H "$auth_header" -H "Content-Type: application/json" -d "$payload" "${2}/${existing_id}" >/dev/null
+		return
+	fi
+	for hook_type in forgejo gitea; do
+		payload="$(jq -n --arg url "$WEBHOOK_TARGET_URL" --arg secret "$WEBHOOK_SECRET" --arg type "$hook_type" --argjson events "$hook_events" \
 			'{type:$type, config:{url:$url, content_type:"json", secret:$secret}, events:$events, active:true}')"
-		curl -fsS -X POST -H "$auth_header" -H "Content-Type: application/json" \
-			-d "$hook_payload" \
-			"${api}/admin/hooks?type=system" >/dev/null
-	}
-	create_system_hook "forgejo" || create_system_hook "gitea"
-fi
+		if curl -fsS -X POST -H "$auth_header" -H "Content-Type: application/json" -d "$payload" "$2" >/dev/null; then
+			return
+		fi
+	done
+}
+
+# Default webhook: every newly created repo inherits it automatically.
+default_hooks="$(curl -fsS -H "$auth_header" "${api}/admin/hooks?limit=50" || echo '[]')"
+ensure_hook "$default_hooks" "${api}/admin/hooks"
+
+# The default webhook only covers repos created after it exists, so also add the
+# webhook to every repo that already exists (e.g. the bootstrap demo repo).
+repos="$(curl -fsS -H "$auth_header" "${api}/repos/search?limit=50" | jq -r '.data[]?.full_name' || true)"
+for repo in $repos; do
+	repo_hooks="$(curl -fsS -H "$auth_header" "${api}/repos/${repo}/hooks" || echo '[]')"
+	ensure_hook "$repo_hooks" "${api}/repos/${repo}/hooks"
+done
 
 if [ "$FORGEJO_BOOTSTRAP_ISSUE" = "true" ]; then
 	issues="$(
@@ -252,7 +263,7 @@ Bot user:   ${FORGEJO_BOOTSTRAP_USER} / ${FORGEJO_BOOTSTRAP_PASSWORD}
 Dev user:   ${FORGEJO_DEV_USER} / ${FORGEJO_DEV_PASSWORD}
 Repo:       ${FORGEJO_BOOTSTRAP_USER}/${FORGEJO_BOOTSTRAP_REPO}
 Issue:      Demo: run forge-ai
-Webhook:    ${WEBHOOK_TARGET_URL} (system-wide, all repos)
+Webhook:    ${WEBHOOK_TARGET_URL} (default hook + all existing repos)
 Agents:     ${FORGEJO_AGENT_USERS:-none} (password: ${FORGEJO_AGENT_PASSWORD})
 EOF
 

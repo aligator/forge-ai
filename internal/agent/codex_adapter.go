@@ -12,6 +12,9 @@ type codexAdapter struct{}
 // (~/.codex/models_cache.json) is absent, e.g. in a fresh container where codex
 // has not yet fetched its model list. Free-text entry stays available.
 var codexModels = []string{
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
+	"gpt-5.6-luna",
 	"gpt-5.5",
 	"gpt-5.4",
 	"gpt-5.4-mini",

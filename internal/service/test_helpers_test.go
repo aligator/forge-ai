@@ -131,9 +131,9 @@ type recordingGit struct {
 	pushBranch    string
 }
 
-func (g *recordingGit) Prepare(_ context.Context, _, _, _, _, _, _, _ string, identity config.GitIdentity) (string, error) {
+func (g *recordingGit) Prepare(_ context.Context, _, _, _, _, _, _, _ string, identity config.GitIdentity) (string, bool, error) {
 	g.identity = identity
-	return g.workdir, nil
+	return g.workdir, false, nil
 }
 
 func (g *recordingGit) CommitIfDirty(_ context.Context, _, message string) (bool, error) {
