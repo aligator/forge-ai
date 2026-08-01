@@ -104,6 +104,10 @@ func (s *Service) ManualResume(ctx context.Context, parentRunID, agentMention, s
 	return run.ID, nil
 }
 
+// resume runs a manual_resume run. It reuses the normal workflow machinery
+// (commit/push, ensure pull request, finish/abort) and only differs at the
+// start: a caller-supplied prompt, an inherited session ID and a workspace that
+// is prepared according to the selected WorkspaceMode.
 func (r *workflowRunner) resume(ctx context.Context, ag Agent, parentRun, run runstore.Run, in manualResumeInput, identity config.GitIdentity) error {
 	r.markRunRunning(ctx, run.ID)
 	r.addRunEvent(ctx, run.ID, "resume_start", "manual resume started, mode="+in.WorkspaceMode)
@@ -113,40 +117,65 @@ func (r *workflowRunner) resume(ctx context.Context, ag Agent, parentRun, run ru
 		sessionID = parentRun.SessionID
 	}
 
+	fc := r.service.handler.forgejoFor(in.AgentMention)
+	state := &workflowState{
+		ticket: forgejoTicketFromRun(parentRun),
+		run:    run,
+		branch: parentRun.Branch,
+		base:   parentRun.BaseBranch,
+	}
+
 	workdir, cleanup, err := r.prepareResumeWorkspace(ctx, parentRun, in, identity)
 	if err != nil {
 		r.finishRun(ctx, run.ID, runstore.StatusFailed, err)
 		return err
 	}
 	defer cleanup()
+	state.workdir = workdir
 
 	r.addRunEvent(ctx, run.ID, "workspace_ready", "workspace ready, mode="+in.WorkspaceMode)
 
-	_, agentErr := r.runAgent(ctx, ag, workdir, in.Prompt, sessionID, run.ID)
+	// Same path as the normal workflow, only the start (prompt + session) differs.
+	result, agentErr := r.runAgent(ctx, ag, state.workdir, in.Prompt, sessionID, run.ID)
+	state.result = result
+
+	// manual_context_only has no real git workspace: run the agent and finish
+	// without committing, pushing or touching a pull request.
+	contextOnly := in.WorkspaceMode == WorkspaceModeManualContextOnly
+
 	if agentErr != nil {
-		if in.WorkspaceMode != WorkspaceModeManualContextOnly {
-			if preserveErr := r.commitAndPushAfterAbort(&workflowState{
-				ticket:  forgejoTicketFromRun(parentRun),
-				run:     run,
-				branch:  parentRun.Branch,
-				base:    parentRun.BaseBranch,
-				workdir: workdir,
-			}); preserveErr != nil {
-				agentErr = fmt.Errorf("%w; preserve aborted changes: %v", agentErr, preserveErr)
+		// context-only has no workspace to preserve: just record the outcome.
+		if contextOnly {
+			if ctx.Err() != nil {
+				r.finishRun(context.Background(), run.ID, runstore.StatusCanceled, agentErr)
+				return agentErr
 			}
-		}
-		if ctx.Err() != nil {
-			r.finishRun(context.Background(), run.ID, runstore.StatusCanceled, agentErr)
+			agentErr = fmt.Errorf("agent failed: %w", agentErr)
+			r.finishRun(ctx, run.ID, runstore.StatusFailed, agentErr)
 			return agentErr
 		}
-		agentErr = fmt.Errorf("agent failed: %w", agentErr)
-		r.finishRun(ctx, run.ID, runstore.StatusFailed, agentErr)
-		return agentErr
+		// git modes: abortWorkflow commits/pushes any changes before failing or
+		// marking canceled, so work is never lost.
+		if ctx.Err() == nil {
+			agentErr = fmt.Errorf("agent failed: %w", agentErr)
+		}
+		return r.abortWorkflow(ctx, fc, state, agentErr)
+	}
+	r.addRunEvent(ctx, run.ID, "agent_finished", "agent completed")
+
+	if contextOnly {
+		r.finishRun(ctx, run.ID, runstore.StatusSuccess, nil)
+		return nil
 	}
 
-	r.addRunEvent(ctx, run.ID, "agent_finished", "agent completed")
-	r.finishRun(ctx, run.ID, runstore.StatusSuccess, nil)
-	return nil
+	if err := r.commitAndPush(ctx, fc, state); err != nil {
+		return err
+	}
+	pull, err := r.ensurePullRequest(ctx, fc, *state)
+	if err != nil {
+		return err
+	}
+	return r.finishWorkflow(ctx, fc, *state, pull)
 }
 
 func forgejoTicketFromRun(run runstore.Run) forgejo.Ticket {

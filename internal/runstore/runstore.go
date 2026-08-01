@@ -9,6 +9,7 @@ import (
 
 var ErrInvalidStatusTransition = errors.New("invalid run status transition")
 var ErrAgentSettingsNotFound = errors.New("agent settings not found")
+var ErrSettingNotFound = errors.New("setting not found")
 
 type RunKind string
 

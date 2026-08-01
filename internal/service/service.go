@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -40,6 +42,15 @@ type optionsAgent interface {
 type agentSettingsGetter interface {
 	GetAgentSettings(context.Context, string) (runstore.AgentSettings, error)
 }
+
+// settingsStore is the optional persistence used for runtime-tunable settings
+// such as the queue slot count. Implemented by runstore.SQLiteStore.
+type settingsStore interface {
+	GetSetting(context.Context, string) (string, error)
+	SetSetting(context.Context, string, string, string) error
+}
+
+const settingKeyMaxConcurrent = "max_concurrent"
 
 type Options struct {
 	Config         config.Config
@@ -85,7 +96,38 @@ func New(options Options) *Service {
 		},
 	}
 	runner.service = svc
+	svc.restoreMaxConcurrent(options.Config.MaxConcurrent)
 	return svc
+}
+
+// restoreMaxConcurrent loads a persisted slot count and applies it to the
+// runtime, so a value set via the dashboard survives a restart. Falls back to
+// the config default when nothing is persisted.
+func (s *Service) restoreMaxConcurrent(configDefault int) {
+	store, ok := s.handler.runner.runStore.(settingsStore)
+	if !ok {
+		return
+	}
+	value, err := store.GetSetting(context.Background(), settingKeyMaxConcurrent)
+	if err != nil {
+		if !errors.Is(err, runstore.ErrSettingNotFound) && s.handler.logger != nil {
+			s.handler.logger.Warn("load persisted max concurrent failed", "error", err)
+		}
+		return
+	}
+	maxConcurrent, err := strconv.Atoi(value)
+	if err != nil || maxConcurrent <= 0 {
+		if s.handler.logger != nil {
+			s.handler.logger.Warn("ignore invalid persisted max concurrent", "value", value)
+		}
+		return
+	}
+	if maxConcurrent == configDefault {
+		return
+	}
+	if err := s.runtime.SetMaxConcurrent(maxConcurrent); err != nil && s.handler.logger != nil {
+		s.handler.logger.Warn("apply persisted max concurrent failed", "error", err)
+	}
 }
 
 func (s *Service) Handle(ctx context.Context, event string, payload forgejo.WebhookPayload) error {
@@ -198,6 +240,11 @@ func (s *Service) ResumeQueue(ctx context.Context, actor string) {
 func (s *Service) SetMaxConcurrent(ctx context.Context, maxConcurrent int, actor string) error {
 	if err := s.runtime.SetMaxConcurrent(maxConcurrent); err != nil {
 		return err
+	}
+	if store, ok := s.handler.runner.runStore.(settingsStore); ok {
+		if err := store.SetSetting(ctx, settingKeyMaxConcurrent, strconv.Itoa(maxConcurrent), actor); err != nil {
+			return fmt.Errorf("persist max concurrent: %w", err)
+		}
 	}
 	s.audit(ctx, actor, "queue.set_max_concurrent", "queue", "default", fmt.Sprintf(`{"max_concurrent":%d}`, maxConcurrent))
 	return nil

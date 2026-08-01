@@ -95,6 +95,42 @@ func TestSQLiteStorePersistsRunsEventsLogsAndLinks(t *testing.T) {
 	}
 }
 
+func TestSQLiteStorePersistsSettings(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "runstore.sqlite")
+
+	store, err := OpenSQLite(ctx, path)
+	if err != nil {
+		t.Fatalf("OpenSQLite() error = %v", err)
+	}
+
+	if _, err := store.GetSetting(ctx, "max_concurrent"); !errors.Is(err, ErrSettingNotFound) {
+		t.Fatalf("GetSetting() error = %v, want ErrSettingNotFound", err)
+	}
+
+	if err := store.SetSetting(ctx, "max_concurrent", "3", "alice"); err != nil {
+		t.Fatalf("SetSetting() error = %v", err)
+	}
+	if err := store.SetSetting(ctx, "max_concurrent", "5", "bob"); err != nil {
+		t.Fatalf("SetSetting() overwrite error = %v", err)
+	}
+	store.Close()
+
+	reopened, err := OpenSQLite(ctx, path)
+	if err != nil {
+		t.Fatalf("reopen OpenSQLite() error = %v", err)
+	}
+	defer reopened.Close()
+
+	value, err := reopened.GetSetting(ctx, "max_concurrent")
+	if err != nil {
+		t.Fatalf("GetSetting() after reopen error = %v", err)
+	}
+	if value != "5" {
+		t.Fatalf("GetSetting() = %q, want 5", value)
+	}
+}
+
 func TestSQLiteStorePersistsAuditEvents(t *testing.T) {
 	ctx := context.Background()
 	store, err := OpenSQLite(ctx, filepath.Join(t.TempDir(), "runstore.sqlite"))

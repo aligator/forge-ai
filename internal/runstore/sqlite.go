@@ -109,6 +109,12 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			updated_at TEXT NOT NULL,
 			updated_by TEXT NOT NULL DEFAULT ''
 		)`,
+		`CREATE TABLE IF NOT EXISTS settings (
+				key TEXT PRIMARY KEY,
+				value TEXT NOT NULL,
+				updated_at TEXT NOT NULL,
+				updated_by TEXT NOT NULL DEFAULT ''
+			)`,
 		`CREATE INDEX IF NOT EXISTS idx_runs_ticket ON runs(owner, repo, ticket_kind, ticket_number)`,
 		`CREATE INDEX IF NOT EXISTS idx_run_events_run_id ON run_events(run_id, id)`,
 		`CREATE INDEX IF NOT EXISTS idx_run_logs_run_id ON run_logs(run_id, id)`,
@@ -319,6 +325,32 @@ func (s *SQLiteStore) ListAgentSettings(ctx context.Context) ([]AgentSettings, e
 		settings = append(settings, item)
 	}
 	return settings, rows.Err()
+}
+
+func (s *SQLiteStore) GetSetting(ctx context.Context, key string) (string, error) {
+	var value string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, key).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrSettingNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("get setting %q: %w", key, err)
+	}
+	return value, nil
+}
+
+func (s *SQLiteStore) SetSetting(ctx context.Context, key, value, updatedBy string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO settings (key, value, updated_at, updated_by)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(key) DO UPDATE SET
+			value = excluded.value,
+			updated_at = excluded.updated_at,
+			updated_by = excluded.updated_by`,
+		key, value, formatTime(time.Now().UTC()), updatedBy)
+	if err != nil {
+		return fmt.Errorf("set setting %q: %w", key, err)
+	}
+	return nil
 }
 
 func (s *SQLiteStore) GetRun(ctx context.Context, id string) (Run, error) {
