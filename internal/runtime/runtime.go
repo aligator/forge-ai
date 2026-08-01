@@ -106,11 +106,7 @@ func (r *Runtime) SubmitWebhookRun(ctx context.Context, spec RunSpec, fn func(co
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
-	state, err := r.accept(spec, cancel)
-	if err != nil {
-		cancel()
-		return err
-	}
+	state := r.accept(spec, cancel)
 
 	defer cancel()
 
@@ -164,7 +160,7 @@ func (r *Runtime) CancelRun(id string) bool {
 		return false
 	}
 	switch state.Status {
-	case StatusPending, StatusRunning:
+	case StatusPending, StatusRunning, StatusBlocked:
 	default:
 		return false
 	}
@@ -208,7 +204,7 @@ func (r *Runtime) Snapshot() Snapshot {
 	return snap
 }
 
-func (r *Runtime) accept(spec RunSpec, cancel context.CancelFunc) (*runState, error) {
+func (r *Runtime) accept(spec RunSpec, cancel context.CancelFunc) *runState {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -231,16 +227,14 @@ func (r *Runtime) accept(spec RunSpec, cancel context.CancelFunc) (*runState, er
 		if _, exists := r.activeTickets[spec.TicketRef]; exists {
 			state.Status = StatusBlocked
 			state.BlockReason = BlockReasonTicketActive
-			state.FinishedAt = time.Now()
-			return state, ErrTicketActive
+			return state
 		}
 	}
 	if spec.Branch != "" {
 		if _, exists := r.activeBranches[spec.Branch]; exists {
 			state.Status = StatusBlocked
 			state.BlockReason = BlockReasonBranchActive
-			state.FinishedAt = time.Now()
-			return state, ErrBranchActive
+			return state
 		}
 	}
 	if spec.TicketRef != "" {
@@ -249,7 +243,7 @@ func (r *Runtime) accept(spec RunSpec, cancel context.CancelFunc) (*runState, er
 	if spec.Branch != "" {
 		r.activeBranches[spec.Branch] = state.ID
 	}
-	return state, nil
+	return state
 }
 
 func (r *Runtime) waitForSlot(ctx context.Context, id string) error {
@@ -276,6 +270,30 @@ func (r *Runtime) waitForSlot(ctx context.Context, id string) error {
 			r.releaseLocked(state)
 			return err
 		}
+		if state.Status == StatusBlocked {
+			if state.TicketRef != "" {
+				if _, exists := r.activeTickets[state.TicketRef]; exists {
+					state.BlockReason = BlockReasonTicketActive
+					r.cond.Wait()
+					continue
+				}
+			}
+			if state.Branch != "" {
+				if _, exists := r.activeBranches[state.Branch]; exists {
+					state.BlockReason = BlockReasonBranchActive
+					r.cond.Wait()
+					continue
+				}
+			}
+			if state.TicketRef != "" {
+				r.activeTickets[state.TicketRef] = state.ID
+			}
+			if state.Branch != "" {
+				r.activeBranches[state.Branch] = state.ID
+			}
+			state.Status = StatusPending
+			state.BlockReason = ""
+		}
 		if !r.paused && r.usedSlots < r.maxConcurrent {
 			r.usedSlots++
 			state.Status = StatusRunning
@@ -301,11 +319,8 @@ func (r *Runtime) finish(id string, status Status, err error) {
 	}
 	state.Status = status
 	state.FinishedAt = time.Now()
-	ticketRef := state.TicketRef
-	branch := state.Branch
 	r.releaseLocked(state)
 	delete(r.runs, id)
-	r.removeBlockedLocked(ticketRef, branch)
 	r.cond.Broadcast()
 }
 
@@ -315,21 +330,6 @@ func (r *Runtime) releaseLocked(state *runState) {
 	}
 	if state.Branch != "" && r.activeBranches[state.Branch] == state.ID {
 		delete(r.activeBranches, state.Branch)
-	}
-}
-
-func (r *Runtime) removeBlockedLocked(ticketRef, branch string) {
-	for id, state := range r.runs {
-		if state.Status != StatusBlocked {
-			continue
-		}
-		if ticketRef != "" && state.TicketRef == ticketRef && state.BlockReason == BlockReasonTicketActive {
-			delete(r.runs, id)
-			continue
-		}
-		if branch != "" && state.Branch == branch && state.BlockReason == BlockReasonBranchActive {
-			delete(r.runs, id)
-		}
 	}
 }
 
