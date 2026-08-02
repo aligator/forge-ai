@@ -62,8 +62,9 @@ RUN mkdir -p /home/agent/.config/nix \
     && . /home/agent/.nix-profile/etc/profile.d/nix.sh \
     && nix-channel --update
 
+# Claude Code reads MCP server definitions from ~/.claude.json (user scope), not
+# from ~/.claude/settings.json — settings.json only holds MCP approval policy.
 COPY scripts/agent-config/claude.json      /home/agent/.claude.json
-COPY scripts/agent-config/claude-settings.json /home/agent/.claude/settings.json
 COPY scripts/agent-config/codex.toml       /home/agent/.codex/config.toml
 COPY scripts/agent-config/opencode.json    /home/agent/.config/opencode/config.json
 RUN claude plugin marketplace add JuliusBrussee/caveman \
