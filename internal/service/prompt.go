@@ -9,9 +9,11 @@ import (
 )
 
 func prompt(ticket forgejo.Ticket, branch, base string, allowGit bool, toolHints string) string {
-	gitPolicy := `Repo already on branch. No git cmds except the base-merge check below. Edit files only otherwise; forge-ai commits+pushes.`
+	gitPolicy := `Repo already on branch. Stay there. Default flow: edit files only; forge-ai commits+pushes after you exit. Git is not forbidden — run git commands when a workflow needs them (e.g. staging new files so a Nix flake sees them, the base merge below, inspecting history), just do not make it your default. Never create/switch/reset/rebase/delete branches or rewrite existing history.`
+	donePolicy := `Done: write one-line conventional commit msg to ".forge-ai-commit-msg". Leave committing and pushing to forge-ai unless a workflow forced you to do it yourself.`
 	if allowGit {
-		gitPolicy = `Repo already on branch. Stay there. Allowed: git status, diff, add, commit, fetch the base branch, and merge the base branch into the current branch. Forbidden: create/switch/reset/rebase/delete branches, push. forge-ai pushes+posts.`
+		gitPolicy = `Repo already on branch. Stay there. Allowed: git status, diff, add, commit, fetch the base branch, and merge the base branch into the current branch. Push only when a workflow requires it; forge-ai pushes+posts otherwise. Never create/switch/reset/rebase/delete branches or rewrite existing history.`
+		donePolicy = `Done: write one-line conventional commit msg to ".forge-ai-commit-msg" for whatever you left uncommitted. forge-ai commits the rest and pushes.`
 	}
 	var toolSection string
 	if strings.TrimSpace(toolHints) != "" {
@@ -59,8 +61,8 @@ Merge assistance:
 
 Blocked? Post a Forgejo comment explaining the blocker. Otherwise implement directly — do not ask for confirmation on steps the task already specifies.
 
-Done: write one-line conventional commit msg to ".forge-ai-commit-msg". No commit. No push.`,
-		ticket.Owner, ticket.Repo, ticket.Kind, ticket.Number, branch, base, ticket.HTMLURL, ticket.Title, ticket.Body, strings.TrimSpace(ticket.Instruction), gitPolicy, toolSection)
+%s`,
+		ticket.Owner, ticket.Repo, ticket.Kind, ticket.Number, branch, base, ticket.HTMLURL, ticket.Title, ticket.Body, strings.TrimSpace(ticket.Instruction), gitPolicy, toolSection, donePolicy)
 }
 
 func sessionIDFromInstruction(instruction string, routes []config.AgentRoute) string {

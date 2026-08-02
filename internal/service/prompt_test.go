@@ -90,6 +90,46 @@ func TestPromptTellsAgentToMergeBaseBeforeFinishing(t *testing.T) {
 	}
 }
 
+func TestPromptAllowsGitWhenAWorkflowNeedsIt(t *testing.T) {
+	ticket := forgejo.Ticket{
+		Owner:       "ac",
+		Repo:        "demo",
+		Kind:        "issue",
+		Number:      1,
+		Instruction: "@forge-ai implement",
+	}
+
+	off := prompt(ticket, "forge-ai/ac/demo/issue-1", "main", false, "")
+	for _, want := range []string{
+		"Default flow: edit files only",
+		"Git is not forbidden — run git commands when a workflow needs them",
+		"Never create/switch/reset/rebase/delete branches or rewrite existing history.",
+		"Leave committing and pushing to forge-ai unless a workflow forced you to do it yourself.",
+	} {
+		if !strings.Contains(off, want) {
+			t.Fatalf("prompt(allowGit=false) missing %q in:\n%s", want, off)
+		}
+	}
+	for _, unwanted := range []string{"No git cmds", "No commit. No push."} {
+		if strings.Contains(off, unwanted) {
+			t.Fatalf("prompt(allowGit=false) still contains %q in:\n%s", unwanted, off)
+		}
+	}
+
+	on := prompt(ticket, "forge-ai/ac/demo/issue-1", "main", true, "")
+	for _, want := range []string{
+		"Push only when a workflow requires it",
+		"Never create/switch/reset/rebase/delete branches or rewrite existing history.",
+	} {
+		if !strings.Contains(on, want) {
+			t.Fatalf("prompt(allowGit=true) missing %q in:\n%s", want, on)
+		}
+	}
+	if strings.Contains(on, "Forbidden: create/switch/reset/rebase/delete branches, push.") {
+		t.Fatalf("prompt(allowGit=true) still forbids push outright in:\n%s", on)
+	}
+}
+
 func TestSessionIDFromInstructionUsesTokenAfterMention(t *testing.T) {
 	routes := []config.AgentRoute{{Mention: "@claude"}}
 	got := sessionIDFromInstruction("@claude session-123 continue work", routes)

@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 )
