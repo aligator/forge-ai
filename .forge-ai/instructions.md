@@ -4,8 +4,8 @@
 
 - Do only the issue/review task. Read the full issue/PR context and latest comments first.
 - Use `rtk` for shell commands when available.
-- Do not commit or push. `forge-ai` commits and pushes after the agent exits.
-- Stay on the prepared branch. Do not switch branches.
+- Committing and pushing is not the default flow: `forge-ai` commits and pushes after the agent exits. Run git yourself only when a workflow needs it (e.g. staging new files so a Nix flake sees them, or merging the base branch).
+- Stay on the prepared branch. Do not switch branches or rewrite existing history.
 - Do not modify credentials, auth files, `.env`, or host-mounted secrets.
 - Do not edit generated/build output in `dist/` unless the task explicitly requires release artifacts.
 - Keep changes minimal and focused.

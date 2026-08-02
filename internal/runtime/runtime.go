@@ -115,7 +115,7 @@ func (r *Runtime) SubmitWebhookRun(ctx context.Context, spec RunSpec, fn func(co
 		return err
 	}
 
-	err = fn(runCtx)
+	err := fn(runCtx)
 	if err != nil {
 		if errors.Is(runCtx.Err(), context.Canceled) {
 			r.finish(state.ID, StatusCanceled, err)

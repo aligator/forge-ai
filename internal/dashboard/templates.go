@@ -496,8 +496,8 @@ const templates = `
 			Git access
 			<select name="allow_git_mode">
 				<option value="inherit" {{if eq .GitMode "inherit"}}selected{{end}}>Inherit env default (AGENT_ALLOW_GIT={{.AllowGitDefault}})</option>
-				<option value="on" {{if eq .GitMode "on"}}selected{{end}}>Force on — agent may run git</option>
-				<option value="off" {{if eq .GitMode "off"}}selected{{end}}>Force off — agent may not run git</option>
+				<option value="on" {{if eq .GitMode "on"}}selected{{end}}>Force on — git is part of the normal flow</option>
+				<option value="off" {{if eq .GitMode "off"}}selected{{end}}>Force off — git only when a workflow needs it</option>
 			</select>
 		</label>
 		<div class="form-actions">

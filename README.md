@@ -121,14 +121,14 @@ AGENT_0_USER=opencode AGENT_0_BIN=opencode AGENT_0_ARGS=run go run .
 Git use inside the spawned agent is controlled by the prompt policy and the CLI args:
 
 ```bash
-AGENT_ALLOW_GIT=false go run . # prompt: agent edits files only; forge-ai commits and pushes
+AGENT_ALLOW_GIT=false go run . # prompt: editing files is the default flow; forge-ai commits and pushes
 
 AGENT_ALLOW_GIT=true \
   AGENT_0_ARGS="exec --sandbox danger-full-access" \
   go run .
 ```
 
-When `AGENT_ALLOW_GIT=true`, the prompt still tells the agent to stay on the prepared branch and only use git status, diff, add, and commit. It must not switch branches or push. The sandbox is just part of `AGENT_0_ARGS`; use `danger-full-access` if Codex should be able to write `.git`.
+`AGENT_ALLOW_GIT` picks the default flow, not a hard ban. With `false` the agent is told to edit files and leave committing and pushing to forge-ai, but it may still run git when a workflow requires it (staging new files so a Nix flake sees them, merging the base branch, and similar). With `true` git status, diff, add, commit, and the base merge are part of the normal flow, and pushing is allowed when a workflow needs it. In both modes the agent must stay on the prepared branch and must not rewrite existing history. The sandbox is just part of `AGENT_0_ARGS`; use `danger-full-access` if Codex should be able to write `.git`.
 
 Commit identity defaults to `GIT_USER_NAME` and `GIT_USER_EMAIL`. Override it per configured agent with `AGENT_0_GIT_USER_NAME` and `AGENT_0_GIT_USER_EMAIL`. The selected identity is written to the worktree before the agent starts, so it applies both to forge-ai's automatic commit and to agent-created git commits.
 
