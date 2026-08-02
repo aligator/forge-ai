@@ -1,14 +1,15 @@
 {
+  "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "servers": {
-      "playwright": {
-        "command": "npx",
-        "args": ["@playwright/mcp", "--headless", "--browser", "chromium"]
-      },
-      "forgejo": {
-        "command": "sh",
-        "args": ["-c", "exec forgejo-mcp --transport stdio --url \"${FORGEJO_URL:-http://localhost:3000}\""]
-      }
+    "playwright": {
+      "type": "local",
+      "enabled": true,
+      "command": ["npx", "@playwright/mcp", "--headless", "--browser", "chromium"]
+    },
+    "forgejo": {
+      "type": "local",
+      "enabled": true,
+      "command": ["sh", "-c", "exec forgejo-mcp --transport stdio --url \"${FORGEJO_URL:-http://localhost:3000}\""]
     }
   }
 }
