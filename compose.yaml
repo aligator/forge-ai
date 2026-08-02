@@ -78,6 +78,7 @@ services:
       CLONE_URL_BASE: ${CLONE_URL_BASE:-http://forgejo:3000}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
       WORKSPACE_DIR: /var/lib/forge-ai/workspaces
+      SCCACHE_CACHE_SIZE: ${SCCACHE_CACHE_SIZE:-20G}
       BRANCH_PREFIX: ${BRANCH_PREFIX:-forge-ai}
       CREATE_PR: ${CREATE_PR:-true}
       MAX_CONCURRENT: ${MAX_CONCURRENT:-3}
@@ -105,8 +106,12 @@ services:
       AGENT_2_GIT_USER_EMAIL: ${AGENT_2_GIT_USER_EMAIL:-opencode@example.invalid}
     volumes:
       - forge-ai-workspaces:/var/lib/forge-ai/workspaces
+      # Named volume, not a bind mount: it is seeded from the image directory
+      # (right owner, right mode) and keeps the Rust cache across recreates.
+      - forge-ai-sccache:/home/agent/.cache/sccache
       - ${CLAUDE_CREDENTIALS:-${HOME}/.claude/.credentials.json}:/home/agent/.claude/.credentials.json:ro
       - ${CODEX_CREDENTIALS:-${HOME}/.codex/auth.json}:/home/agent/.codex/auth.json:ro
 
 volumes:
   forge-ai-workspaces:
+  forge-ai-sccache:

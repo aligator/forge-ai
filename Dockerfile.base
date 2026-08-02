@@ -15,6 +15,7 @@ RUN git clone --depth 1 --branch "${FORGEJO_MCP_VERSION}" https://codeberg.org/g
 FROM node:24-trixie
 ARG TARGETARCH
 ARG RTK_VERSION=0.42.4
+ARG SCCACHE_VERSION=0.17.0
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -38,6 +39,23 @@ RUN set -eux; \
     rm -rf /tmp/rtk; \
     rtk --version
 
+# sccache as a static musl binary in /usr/local/bin, not via nix-env: the path
+# stays valid no matter what a project dev shell puts in front of PATH, and it
+# survives a volume mounted over /home/agent.
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+        amd64) sccache_arch="x86_64" ;; \
+        arm64) sccache_arch="aarch64" ;; \
+        *) echo "unsupported TARGETARCH for sccache: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    sccache_asset="sccache-v${SCCACHE_VERSION}-${sccache_arch}-unknown-linux-musl.tar.gz"; \
+    mkdir -p /tmp/sccache; \
+    curl -fsSL "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/${sccache_asset}" \
+        | tar -xz -C /tmp/sccache; \
+    install -m 0755 "$(find /tmp/sccache -type f -name sccache | head -1)" /usr/local/bin/sccache; \
+    rm -rf /tmp/sccache; \
+    sccache --version
+
 COPY --from=forgejo-mcp-builder /go/bin/forgejo-mcp /usr/local/bin/forgejo-mcp
 
 RUN set -e; \
@@ -51,7 +69,7 @@ RUN set -e; \
     else \
         useradd --create-home --uid 1000 --gid 1000 --shell /bin/bash agent; \
     fi; \
-    mkdir -p /nix /var/lib/forge-ai/workspaces /home/agent/.codex /home/agent/.claude /home/agent/.config/opencode; \
+    mkdir -p /nix /var/lib/forge-ai/workspaces /home/agent/.codex /home/agent/.claude /home/agent/.config/opencode /home/agent/.cache/sccache; \
     chown -R agent:agent /nix /var/lib/forge-ai /home/agent
 
 USER agent
@@ -85,4 +103,14 @@ EXPOSE 8080
 # of the workspace when set (see flake.nix).
 ENV FORGE_AI_CONTAINER=1
 
-ENV AGENT_TOOL_HINTS="- rtk is installed at /usr/local/bin/rtk. Prefix shell commands with rtk.\n- Nix is installed (single-user). Use it to install any CLI tools you need without root: nix-env -iA nixpkgs.ripgrep (prebuilt binaries, fast). Run . ~/.nix-profile/etc/profile.d/nix.sh first if nix commands are not found.\n- Caveman skill/plugin support is installed with native agent paths: Claude plugin, Codex skill, and opencode skill. Use caveman style by default: terse, no filler, preserve exact code/commands/errors. Switch levels with /caveman lite|full|ultra when supported. Do not enable caveman-shrink MCP unless explicitly requested.\n- Playwright MCP is available for browser automation and web scraping (headless Chromium).\n- Forgejo MCP is available (MCP server name: forgejo). Use it to read issue comments, list PRs, fetch file contents, search code, and more. The credentials and server URL are pre-configured via environment variables."
+# Global Rust compilation cache. Agents inherit this env, so every cargo build
+# in every workspace shares one sccache store under the agent home. `target/`
+# stays per workspace on purpose: a shared CARGO_TARGET_DIR takes an exclusive
+# lock and would serialize parallel agents.
+# CARGO_INCREMENTAL=0 is required — incremental compilation bypasses sccache.
+ENV RUSTC_WRAPPER=/usr/local/bin/sccache \
+    SCCACHE_DIR=/home/agent/.cache/sccache \
+    SCCACHE_CACHE_SIZE=20G \
+    CARGO_INCREMENTAL=0
+
+ENV AGENT_TOOL_HINTS="- rtk is installed at /usr/local/bin/rtk. Prefix shell commands with rtk.\n- Nix is installed (single-user). Use it to install any CLI tools you need without root: nix-env -iA nixpkgs.ripgrep (prebuilt binaries, fast). Run . ~/.nix-profile/etc/profile.d/nix.sh first if nix commands are not found.\n- Caveman skill/plugin support is installed with native agent paths: Claude plugin, Codex skill, and opencode skill. Use caveman style by default: terse, no filler, preserve exact code/commands/errors. Switch levels with /caveman lite|full|ultra when supported. Do not enable caveman-shrink MCP unless explicitly requested.\n- Rust builds are wrapped by sccache (RUSTC_WRAPPER=/usr/local/bin/sccache, SCCACHE_DIR=/home/agent/.cache/sccache), shared across all workspaces. Keep CARGO_INCREMENTAL=0; incremental compilation bypasses sccache. Do not set a shared CARGO_TARGET_DIR. Check hits with: sccache --show-stats\n- Playwright MCP is available for browser automation and web scraping (headless Chromium).\n- Forgejo MCP is available (MCP server name: forgejo). Use it to read issue comments, list PRs, fetch file contents, search code, and more. The credentials and server URL are pre-configured via environment variables."
