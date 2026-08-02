@@ -98,6 +98,32 @@ The `full` profile builds the forge-ai image. The image includes claude, codex, 
 
 Override with `CLAUDE_CREDENTIALS` and `CODEX_CREDENTIALS`. Workspaces persist in a named Docker volume (`forge-ai-workspaces`).
 
+## Rust build cache (sccache)
+
+The image ships sccache as a static binary at `/usr/local/bin/sccache` and sets it globally, so every cargo build in every workspace shares one object cache:
+
+```text
+RUSTC_WRAPPER=/usr/local/bin/sccache
+SCCACHE_DIR=/home/agent/.cache/sccache
+SCCACHE_CACHE_SIZE=20G       # override per deployment
+CARGO_INCREMENTAL=0
+```
+
+Notes:
+
+- All agents run as the single `agent` user, so the cache is shared across workspaces and branches without any mount. `forge-ai-sccache` is a named volume, so it also survives container recreates; hostPath/bind mounts are deliberately not used.
+- The wrapper is an absolute path outside `/home/agent`: a project's own `nix develop` prepends to `PATH`, and a PATH lookup could miss sccache.
+- `CARGO_INCREMENTAL=0` is required. Incremental compilation bypasses sccache entirely.
+- `target/` stays per workspace. A shared `CARGO_TARGET_DIR` takes an exclusive cargo lock and would serialize parallel agents plus thrash fingerprints.
+- sccache prunes itself to `SCCACHE_CACHE_SIZE`; no GC job needed.
+- Limits: the first build of a project is still cold, build scripts and proc-macro-heavy crates cache only partially, and each rustc version gets its own cache entries.
+
+Check effectiveness inside the container:
+
+```bash
+sccache --show-stats
+```
+
 `FORGEJO_URL` is required. All other variables have defaults matching the dev setup.
 
 ## Agent configuration
